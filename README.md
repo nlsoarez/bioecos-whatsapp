@@ -13,6 +13,7 @@ Backend greenfield para o atendimento da Bioecos com WhatsApp, Débora, base de 
 - pausa efetiva da IA após handoff ou intervenção humana;
 - seed idempotente de projeto, agente, tags, pipeline e conhecimento;
 - API administrativa mínima para dashboard, contato, pipeline e pausa;
+- painel operacional autenticado para configurar a chave OpenAI, monitorar serviços e gerar o QR Code do WhatsApp;
 - 12 cenários de homologação exigidos, além de testes do webhook.
 
 O projeto não usa n8n.
@@ -106,7 +107,7 @@ O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado 
 
 O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. Por isso, a implantação usa a imagem oficial `node:22-alpine` e faz clone, instalação e build dentro do próprio contêiner isolado, sem GitHub Actions.
 
-As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. `BIOECOS_OPENAI_API_KEY` pode permanecer vazia durante a instalação: nesse estado a rota de saúde retorna `setup_required` e o webhook recusa mensagens com `ai_not_configured`. O responsável pela conta deve inserir a chave antes de conectar o WhatsApp.
+As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI é inserida pelo responsável dentro do dashboard e fica cifrada no volume `bioecos_config_data`; não precisa ser cadastrada no Compose. Sem uma chave válida, a rota de saúde retorna `setup_required`, o webhook recusa mensagens e o painel não libera o QR Code do WhatsApp.
 
 ## Limites deliberados
 

@@ -3,91 +3,141 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Portal técnico da automação de atendimento da Bioecos Sustentável.">
-  <title>Bioecos — Automação WhatsApp</title>
+  <meta name="description" content="Painel de monitoramento da automação WhatsApp Bioecos.">
+  <meta name="theme-color" content="#0b211a">
+  <title>Bioecos — Painel da Automação</title>
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="#inicio" aria-label="Bioecos — início">
-      <span class="brand-mark" aria-hidden="true">B</span>
-      <span>Bioecos <small>Automação WhatsApp</small></span>
-    </a>
-    <nav aria-label="Navegação principal">
-      <a href="#arquitetura">Arquitetura</a>
-      <a href="#seguranca">Segurança</a>
-      <a href="#implantacao">Implantação</a>
-      <a class="nav-cta" href="https://www.bioecoscursos.com.br/">Site oficial</a>
-    </nav>
-  </header>
+  <div id="login-view">
+    <main class="login-page">
+      <section class="login-context" aria-labelledby="login-title">
+        <a class="brand" href="./" aria-label="Bioecos — painel da automação">
+          <span class="brand-mark" aria-hidden="true">B</span>
+          <span>Bioecos <small>Automação WhatsApp</small></span>
+        </a>
+        <div class="context-copy">
+          <span class="eyebrow">Ambiente operacional</span>
+          <h1 id="login-title">Controle a automação em um único lugar.</h1>
+          <p>Monitore a Débora, configure a inteligência artificial e conecte o WhatsApp com segurança.</p>
+        </div>
+        <div class="system-state" aria-label="Estado do portal">
+          <span class="status-dot"></span>
+          <div><strong>Painel protegido</strong><small>O acesso exige autenticação</small></div>
+        </div>
+      </section>
 
-  <main id="inicio">
-    <section class="hero">
-      <div class="eyebrow">Atendimento oficial Bioecos</div>
-      <h1>Atendimento estruturado,<br><em>sem respostas inventadas.</em></h1>
-      <p class="lead">Uma operação de WhatsApp com regras determinísticas, conhecimento rastreável, CRM e transferência humana real. A IA ajuda; as políticas continuam no controle.</p>
-      <div class="hero-actions">
-        <a class="button primary" href="#arquitetura">Entender a solução</a>
-        <a class="button secondary" href="architecture.md">Documentação técnica</a>
-      </div>
-      <dl class="metrics" aria-label="Indicadores do projeto">
-        <div><dt>12</dt><dd>cenários de aceite</dd></div>
-        <div><dt>7</dt><dd>etapas no pipeline</dd></div>
-        <div><dt>6</dt><dd>tools validadas</dd></div>
-        <div><dt>0</dt><dd>dependência de n8n</dd></div>
-      </dl>
-    </section>
+      <section class="login-panel" aria-label="Acesso ao painel">
+        <form id="login-form" class="login-card" novalidate>
+          <div class="login-heading">
+            <span class="lock-mark" aria-hidden="true">●</span>
+            <div><h2>Entrar no painel</h2><p>Use as credenciais fornecidas pelo administrador.</p></div>
+          </div>
+          <label for="username">Usuário</label>
+          <input id="username" name="username" type="text" autocomplete="username" placeholder="Seu usuário" required>
+          <label for="password">Senha</label>
+          <div class="password-field">
+            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required>
+            <button id="toggle-password" type="button" aria-label="Mostrar senha">Mostrar</button>
+          </div>
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="login-submit" class="submit-button" type="submit">Acessar painel <span aria-hidden="true">→</span></button>
+          <p class="privacy-note">A sessão fica somente nesta aba do navegador.</p>
+        </form>
+        <footer>Bioecos Sustentável · Acesso restrito</footer>
+      </section>
+    </main>
+  </div>
 
-    <section id="arquitetura" class="section">
-      <div class="section-heading">
-        <span>01 — Arquitetura</span>
-        <h2>Da mensagem ao próximo passo, com controle em cada camada.</h2>
+  <div id="dashboard-view" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand sidebar-brand" href="./">
+        <span class="brand-mark" aria-hidden="true">B</span>
+        <span>Bioecos <small>Painel da automação</small></span>
+      </a>
+      <nav aria-label="Navegação do painel">
+        <button class="nav-item active" data-section="overview"><span>01</span>Visão geral</button>
+        <button class="nav-item" data-section="integrations"><span>02</span>Integrações</button>
+        <button class="nav-item" data-section="conversations"><span>03</span>Atendimentos</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="operator"><span class="operator-avatar">O</span><div><strong id="operator-name">Operador</strong><small>Sessão protegida</small></div></div>
+        <button id="logout-button" class="text-button" type="button">Sair</button>
       </div>
-      <div class="flow" role="list" aria-label="Fluxo da automação">
-        <article role="listitem"><b>01</b><h3>WhatsApp</h3><p>A Evolution API v2 recebe e entrega mensagens sem misturar a lógica de negócio.</p></article>
-        <article role="listitem"><b>02</b><h3>Orquestração</h3><p>Deduplicação, janela de atendimento, pausa e políticas são aplicadas antes da IA.</p></article>
-        <article role="listitem"><b>03</b><h3>Débora + RAG</h3><p>A assistente consulta a base Bioecos no PostgreSQL com busca vetorial e textual.</p></article>
-        <article role="listitem"><b>04</b><h3>CRM + humano</h3><p>Lead, tags, etapa, histórico e handoff permanecem registrados e auditáveis.</p></article>
-      </div>
-    </section>
+    </aside>
 
-    <section id="seguranca" class="section split">
-      <div class="section-heading">
-        <span>02 — Segurança operacional</span>
-        <h2>O que não pode depender de uma resposta probabilística.</h2>
-        <p>As decisões críticas ficam no código, não no prompt. Segredos permanecem fora do Git e os dados pessoais sensíveis são cifrados.</p>
-      </div>
-      <ul class="checklist">
-        <li><strong>Anti-duplicidade</strong><span>Eventos repetidos não geram respostas repetidas.</span></li>
-        <li><strong>Pausa efetiva</strong><span>Intervenção humana interrompe a IA imediatamente.</span></li>
-        <li><strong>CPF cifrado</strong><span>AES-256-GCM com chave exclusiva do ambiente.</span></li>
-        <li><strong>Admin protegido</strong><span>Rotas administrativas exigem chave separada.</span></li>
-        <li><strong>Auditoria</strong><span>Mudanças e ferramentas executadas deixam rastros.</span></li>
-      </ul>
-    </section>
+    <main class="workspace">
+      <header class="workspace-header">
+        <div><span class="page-kicker">Operação em tempo real</span><h1>Automação WhatsApp</h1></div>
+        <div class="header-actions">
+          <span id="last-update" class="last-update">Aguardando dados</span>
+          <button id="refresh-button" class="icon-button" type="button" aria-label="Atualizar dados">↻</button>
+        </div>
+      </header>
 
-    <section id="implantacao" class="section deployment">
-      <div class="section-heading">
-        <span>03 — Implantação isolada</span>
-        <h2>Um projeto novo, sem tocar nos serviços já instalados.</h2>
-      </div>
-      <div class="deployment-grid">
-        <div><span>Docker project</span><strong>bioecos</strong><small>rede e volume exclusivos</small></div>
-        <div><span>API</span><strong>porta 3100</strong><small>sem disputar 80 ou 443</small></div>
-        <div><span>Dados</span><strong>PostgreSQL + pgvector</strong><small>persistência dedicada</small></div>
-        <div><span>Portal</span><strong>GitHub Pages</strong><small>branch main, pasta /docs</small></div>
-      </div>
-      <div class="docs-links">
-        <a href="production-checklist.md">Checklist de produção <span>→</span></a>
-        <a href="gap-analysis.md">Análise de lacunas <span>→</span></a>
-        <a href="architecture.md">Arquitetura completa <span>→</span></a>
-      </div>
-    </section>
-  </main>
+      <section id="section-overview" class="dashboard-section">
+        <div id="global-alert" class="global-alert" hidden></div>
+        <div class="status-grid" aria-label="Estado dos serviços">
+          <article class="status-card"><div class="status-card-head"><span>API</span><i id="api-dot"></i></div><strong id="api-status">Verificando</strong><small>Backend da automação</small></article>
+          <article class="status-card"><div class="status-card-head"><span>IA</span><i id="ai-dot"></i></div><strong id="ai-status">Verificando</strong><small id="ai-model">OpenAI</small></article>
+          <article class="status-card"><div class="status-card-head"><span>WhatsApp</span><i id="whatsapp-dot"></i></div><strong id="whatsapp-status">Verificando</strong><small>Evolution API</small></article>
+          <article class="status-card"><div class="status-card-head"><span>Banco</span><i id="database-dot"></i></div><strong id="database-status">Verificando</strong><small>PostgreSQL + pgvector</small></article>
+        </div>
 
-  <footer>
-    <span>Bioecos Sustentável</span>
-    <p>Portal técnico público. Credenciais, contatos e dados operacionais nunca são publicados aqui.</p>
-  </footer>
+        <div class="content-grid">
+          <article class="panel setup-panel">
+            <div class="panel-heading"><div><span class="panel-kicker">Configuração essencial</span><h2>Inteligência artificial</h2></div><span id="ai-badge" class="badge warning">Pendente</span></div>
+            <p class="panel-description">A chave é validada pela OpenAI e armazenada cifrada no servidor. Ela nunca volta para o navegador.</p>
+            <form id="openai-form" class="key-form">
+              <label for="openai-key">OpenAI API Key</label>
+              <div class="key-field"><input id="openai-key" type="password" autocomplete="off" placeholder="sk-proj-••••••••••••••••" minlength="20" required><button id="toggle-api-key" type="button">Mostrar</button></div>
+              <div class="form-actions"><button id="save-api-key" class="primary-action" type="submit">Validar e salvar</button><button id="remove-api-key" class="secondary-action danger-action" type="button" hidden>Remover chave</button></div>
+              <p id="key-feedback" class="inline-feedback" role="status"></p>
+            </form>
+          </article>
+
+          <article class="panel whatsapp-panel">
+            <div class="panel-heading"><div><span class="panel-kicker">Canal de atendimento</span><h2>WhatsApp</h2></div><span id="whatsapp-badge" class="badge neutral">Desconectado</span></div>
+            <div id="whatsapp-disconnected" class="whatsapp-state">
+              <div class="phone-mark" aria-hidden="true">W</div>
+              <div><strong>Conecte o número da Bioecos</strong><p>O QR Code só é liberado depois que a chave OpenAI estiver válida.</p></div>
+            </div>
+            <div id="qr-area" class="qr-area" hidden>
+              <img id="qr-image" alt="QR Code para conectar o WhatsApp">
+              <div><strong>Escaneie pelo WhatsApp</strong><p>Configurações → Dispositivos conectados → Conectar dispositivo.</p><small id="qr-countdown">QR Code temporário</small></div>
+            </div>
+            <button id="connect-whatsapp" class="primary-action wide-action" type="button">Gerar QR Code</button>
+            <p id="whatsapp-feedback" class="inline-feedback" role="status"></p>
+          </article>
+
+          <article class="panel pipeline-panel">
+            <div class="panel-heading"><div><span class="panel-kicker">Pipeline</span><h2>Leads por etapa</h2></div></div>
+            <div id="pipeline-list" class="pipeline-list"><p class="empty-state">Nenhum lead registrado.</p></div>
+          </article>
+
+          <article class="panel conversations-panel">
+            <div class="panel-heading"><div><span class="panel-kicker">Últimas interações</span><h2>Atendimentos</h2></div></div>
+            <div id="conversation-list" class="conversation-list"><p class="empty-state">Nenhuma conversa registrada.</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="section-integrations" class="dashboard-section" hidden>
+        <div class="section-title"><span class="page-kicker">Configuração</span><h2>Integrações</h2><p>Gerencie as credenciais e o canal usados pela automação.</p></div>
+        <div class="integration-summary">
+          <article class="panel"><span class="integration-icon">AI</span><h3>OpenAI</h3><p>Modelo de respostas e embeddings da base de conhecimento.</p><span id="integration-ai-state" class="badge warning">Pendente</span></article>
+          <article class="panel"><span class="integration-icon">WA</span><h3>Evolution API</h3><p>Conexão segura com o WhatsApp da Bioecos.</p><span id="integration-wa-state" class="badge neutral">Desconectado</span></article>
+        </div>
+      </section>
+
+      <section id="section-conversations" class="dashboard-section" hidden>
+        <div class="section-title"><span class="page-kicker">Monitoramento</span><h2>Atendimentos recentes</h2><p>Visão operacional das conversas processadas pela automação.</p></div>
+        <article class="panel"><div id="conversation-list-full" class="conversation-list"><p class="empty-state">Nenhuma conversa registrada.</p></div></article>
+      </section>
+    </main>
+  </div>
+
+  <script src="assets/config.js"></script>
+  <script src="assets/app.js" defer></script>
 </body>
 </html>

@@ -27,11 +27,16 @@ type ResponseOutputItem = Record<string, unknown> & { type?: string; name?: stri
 type OpenAIResponse = { id?: string; output?: ResponseOutputItem[]; output_text?: string; error?: unknown };
 
 export class OpenAIResponsesClient implements AgentClient {
-  constructor(private readonly env: Env, private readonly request: typeof fetch = fetch) {}
+  constructor(
+    private readonly env: Env,
+    private readonly request: typeof fetch = fetch,
+    private readonly apiKeyProvider: () => Promise<string | null> = async () => env.OPENAI_API_KEY || null,
+  ) {}
 
   async embed(text: string): Promise<number[] | null> {
-    if (!this.env.OPENAI_API_KEY) return null;
-    const response = await this.post("/embeddings", { model: this.env.AI_EMBEDDING_MODEL, input: text });
+    const apiKey = await this.apiKeyProvider();
+    if (!apiKey) return null;
+    const response = await this.post("/embeddings", { model: this.env.AI_EMBEDDING_MODEL, input: text }, apiKey);
     const data = response as { data?: Array<{ embedding?: number[] }> };
     return data.data?.[0]?.embedding ?? null;
   }
@@ -44,7 +49,8 @@ export class OpenAIResponsesClient implements AgentClient {
     knowledge: KnowledgeHit[];
     tools: AgentToolExecutor;
   }): Promise<string> {
-    if (!this.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY não configurada");
+    const apiKey = await this.apiKeyProvider();
+    if (!apiKey) throw new Error("OPENAI_API_KEY não configurada");
     const contextText = JSON.stringify({
       contact: input.context,
       recentMessages: input.recentMessages.map((message) => ({
@@ -70,7 +76,7 @@ export class OpenAIResponsesClient implements AgentClient {
         store: false,
         include: ["reasoning.encrypted_content"],
         max_output_tokens: 600,
-      })) as OpenAIResponse;
+      }, apiKey)) as OpenAIResponse;
       const output = response.output ?? [];
       const calls = output.filter((item) => item.type === "function_call");
       items.push(...output);
@@ -94,10 +100,17 @@ export class OpenAIResponsesClient implements AgentClient {
     throw new Error("Limite de rodadas de tools excedido");
   }
 
-  private async post(path: string, body: unknown): Promise<unknown> {
+  async validateApiKey(apiKey: string): Promise<void> {
+    const response = await this.request(`${this.env.OPENAI_BASE_URL.replace(/\/$/, "")}/models`, {
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) throw new Error(response.status === 401 ? "Chave OpenAI inválida" : `Não foi possível validar a chave OpenAI (${response.status})`);
+  }
+
+  private async post(path: string, body: unknown, apiKey: string): Promise<unknown> {
     const response = await this.request(`${this.env.OPENAI_BASE_URL.replace(/\/$/, "")}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${this.env.OPENAI_API_KEY}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),
     });
     const result = await response.json().catch(() => ({}));

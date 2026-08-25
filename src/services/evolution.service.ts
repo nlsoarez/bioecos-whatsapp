@@ -10,6 +10,18 @@ export interface MessageSender {
   sendText(phone: string, text: string): Promise<SendResult>;
 }
 
+export interface EvolutionConnectionState {
+  configured: boolean;
+  reachable: boolean;
+  state: string;
+}
+
+export interface EvolutionQrCode {
+  base64: string;
+  pairingCode: string | null;
+  count: number;
+}
+
 export class EvolutionService implements MessageSender {
   constructor(private readonly env: Env, private readonly request: typeof fetch = fetch) {}
 
@@ -48,16 +60,41 @@ export class EvolutionService implements MessageSender {
     throw lastError;
   }
 
-  async health(): Promise<{ configured: boolean; reachable: boolean; state?: unknown }> {
-    if (!this.env.EVOLUTION_API_KEY) return { configured: false, reachable: false };
+  async connectionState(): Promise<EvolutionConnectionState> {
+    if (!this.env.EVOLUTION_API_KEY) return { configured: false, reachable: false, state: "unconfigured" };
     const url = `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/instance/connectionState/${encodeURIComponent(this.env.EVOLUTION_INSTANCE_NAME)}`;
     try {
       const response = await this.request(url, { headers: { apikey: this.env.EVOLUTION_API_KEY } });
-      const state = await response.json().catch(() => ({}));
-      return { configured: true, reachable: response.ok, state };
+      const result = await response.json().catch(() => ({})) as { instance?: { state?: unknown }; state?: unknown };
+      return {
+        configured: true,
+        reachable: response.ok,
+        state: String(result.instance?.state ?? result.state ?? (response.ok ? "unknown" : "unreachable")),
+      };
     } catch {
-      return { configured: true, reachable: false };
+      return { configured: true, reachable: false, state: "unreachable" };
     }
+  }
+
+  async health(): Promise<EvolutionConnectionState> {
+    return this.connectionState();
+  }
+
+  async connect(): Promise<EvolutionQrCode> {
+    if (!this.env.EVOLUTION_API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
+    const url = `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/instance/connect/${encodeURIComponent(this.env.EVOLUTION_INSTANCE_NAME)}`;
+    const response = await this.request(url, { headers: { apikey: this.env.EVOLUTION_API_KEY } });
+    const result = await response.json().catch(() => ({})) as { base64?: unknown; pairingCode?: unknown; count?: unknown };
+    if (!response.ok) throw new Error(`Evolution API respondeu ${response.status}`);
+    const base64 = typeof result.base64 === "string" ? result.base64 : "";
+    if (!base64.startsWith("data:image/png;base64,") || base64.length > 2_000_000) {
+      throw new Error("A Evolution não retornou um QR Code válido");
+    }
+    return {
+      base64,
+      pairingCode: typeof result.pairingCode === "string" ? result.pairingCode : null,
+      count: typeof result.count === "number" ? result.count : 0,
+    };
   }
 }
 

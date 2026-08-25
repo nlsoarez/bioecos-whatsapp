@@ -10,6 +10,8 @@ const productionEnv = {
   EVOLUTION_WEBHOOK_SECRET: "webhook-secret",
   ADMIN_API_KEY: "admin-secret-key",
   PII_ENCRYPTION_KEY: "pii-secret",
+  DASHBOARD_PASSWORD: "dashboard-password-secret",
+  DASHBOARD_SESSION_SECRET: "dashboard-session-secret-at-least-32-chars",
 };
 
 describe("configuração de produção", () => {
