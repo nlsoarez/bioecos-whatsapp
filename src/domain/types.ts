@@ -17,6 +17,29 @@ export interface ContactContext {
   pipelineStage: PipelineStage;
   tags: AllowedTag[];
   automationPaused: boolean;
+  qualificationStep: QualificationStep | null;
+  temperature: LeadTemperature;
+  followupEnabled: boolean;
+  followupOptOut: boolean;
+}
+
+export type QualificationStep = "name" | "email" | "city" | "objective";
+export type LeadTemperature = "cold" | "warm" | "hot";
+
+export interface MonthlyFollowupCandidate {
+  leadId: string;
+  contactId: string;
+  conversationId: string;
+  phone: string;
+  name: string | null;
+  course: string;
+  attempts: number;
+}
+
+export interface MonthlyFollowupSettings {
+  enabled: boolean;
+  intervalDays: number;
+  maxAttempts: number;
 }
 
 export interface ChatMessage {
@@ -51,4 +74,3 @@ export interface ToolContext {
   conversationId: string;
   leadId: string;
 }
-

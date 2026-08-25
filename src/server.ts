@@ -6,6 +6,7 @@ import { RuntimeSecretStore } from "./security/runtime-secret.store.js";
 import { ConversationService } from "./services/conversation.service.js";
 import { EvolutionService } from "./services/evolution.service.js";
 import { OpenAIResponsesClient } from "./services/openai.service.js";
+import { MonthlyFollowupService } from "./services/monthly-followup.service.js";
 
 const env = loadEnv();
 const pool = createPool(env);
@@ -16,10 +17,23 @@ const agent = new OpenAIResponsesClient(env, fetch, async () => (
   (await secrets.get("OPENAI_API_KEY")) ?? (env.OPENAI_API_KEY || null)
 ));
 const conversations = new ConversationService(repository, agent, evolution);
+const monthlyFollowup = new MonthlyFollowupService(repository, evolution);
 const app = await buildApp({ env, repository, evolution, conversations, openai: agent, secrets });
+
+const runMonthlyFollowup = async () => {
+  try {
+    const result = await monthlyFollowup.runOnce();
+    if (result.sent || result.failed) app.log.info(result, "Ciclo de acompanhamento mensal concluído");
+  } catch (error) {
+    app.log.error(error, "Falha no ciclo de acompanhamento mensal");
+  }
+};
+const followupTimer = setInterval(() => void runMonthlyFollowup(), env.FOLLOWUP_WORKER_INTERVAL_MS);
+followupTimer.unref();
 
 const close = async (signal: string) => {
   app.log.info({ signal }, "Encerrando aplicação");
+  clearInterval(followupTimer);
   await app.close();
   await pool.end();
   process.exit(0);
@@ -29,6 +43,7 @@ process.on("SIGTERM", () => void close("SIGTERM"));
 process.on("SIGINT", () => void close("SIGINT"));
 
 await app.listen({ host: "0.0.0.0", port: env.PORT });
+setTimeout(() => void runMonthlyFollowup(), 30_000).unref();
 
 try {
   const webhook = await evolution.configureWebhook();

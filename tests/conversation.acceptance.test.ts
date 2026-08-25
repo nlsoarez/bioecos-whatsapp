@@ -154,4 +154,53 @@ describe("homologação Bioecos", () => {
     expect(s.repository.context.automationPaused).toBe(true);
     expect(s.sender.sent).toHaveLength(1);
   });
+
+  it("16. coleta os dados do lead de curso em etapas sem usar IA", async () => {
+    const s = setup();
+    await s.service.handle(inbound("Vocês têm curso de aromaterapia?"));
+    expect(s.repository.context.course).toBe("Aromaterapia");
+    expect(s.repository.context.temperature).toBe("warm");
+    expect(s.repository.context.qualificationStep).toBe("name");
+
+    await s.service.handle(inbound("Maria da Silva"));
+    await s.service.handle(inbound("maria@example.com"));
+    await s.service.handle(inbound("Niterói - RJ"));
+    const result = await s.service.handle(inbound("Quero trabalhar com terapias naturais"));
+
+    expect(s.repository.context.name).toBe("Maria da Silva");
+    expect(s.repository.context.email).toBe("maria@example.com");
+    expect(s.repository.context.city).toBe("Niterói");
+    expect(s.repository.context.objective).toContain("terapias naturais");
+    expect(s.repository.context.qualificationStep).toBeNull();
+    expect(result.response).toContain("Dados registrados");
+    expect(s.agent.calls).toBe(0);
+  });
+
+  it("17. classifica intenção explícita de matrícula como quente e elegível", async () => {
+    const s = setup();
+    await s.service.handle(inbound("Quero me inscrever no curso de aromaterapia"));
+    expect(s.repository.context.temperature).toBe("hot");
+    expect(s.repository.context.followupEnabled).toBe(true);
+  });
+
+  it("18. SAIR cancela o acompanhamento mesmo com atendimento pausado", async () => {
+    const s = setup();
+    s.repository.context.automationPaused = true;
+    s.repository.context.followupEnabled = true;
+    const result = await s.service.handle(inbound("SAIR"));
+    expect(result.response).toContain("cancelado");
+    expect(s.repository.context.followupOptOut).toBe(true);
+    expect(s.sender.sent).toHaveLength(1);
+  });
+
+  it("19. SIM após acompanhamento encaminha o lead quente para fechamento", async () => {
+    const s = setup();
+    s.repository.context.temperature = "hot";
+    s.repository.context.followupEnabled = true;
+    const result = await s.service.handle(inbound("SIM"));
+    expect(result.response).toContain("continuar");
+    expect(s.repository.context.tags).toContain("inscricao");
+    expect(s.repository.context.pipelineStage).toBe("Aguardando especialista");
+    expect(s.repository.context.automationPaused).toBe(true);
+  });
 });

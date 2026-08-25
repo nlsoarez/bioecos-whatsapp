@@ -116,6 +116,19 @@
             <p id="whatsapp-feedback" class="inline-feedback" role="status"></p>
           </article>
 
+          <article class="panel followup-panel">
+            <div class="panel-heading"><div><span class="panel-kicker">Recuperação de oportunidades</span><h2>Acompanhamento mensal</h2></div><span id="followup-badge" class="badge neutral">Inativo</span></div>
+            <p class="panel-description">Envia uma mensagem a cada 30 dias apenas para leads quentes de cursos que não fecharam. Limite de 3 tentativas; conversão, atendimento humano, conversa recente ou resposta SAIR interrompem os envios.</p>
+            <div class="followup-metrics">
+              <div><strong id="followup-hot">0</strong><span>Leads quentes</span></div>
+              <div><strong id="followup-eligible">0</strong><span>Elegíveis</span></div>
+              <div><strong id="followup-sent">0</strong><span>Enviados em 30 dias</span></div>
+              <div><strong id="followup-optouts">0</strong><span>Saídas</span></div>
+            </div>
+            <button id="toggle-followup" class="primary-action wide-action" type="button">Ativar acompanhamento</button>
+            <p id="followup-feedback" class="inline-feedback" role="status"></p>
+          </article>
+
           <article class="panel pipeline-panel">
             <div class="panel-heading"><div><span class="panel-kicker">Pipeline</span><h2>Leads por etapa</h2></div></div>
             <div id="pipeline-list" class="pipeline-list"><p class="empty-state">Nenhum lead registrado.</p></div>
@@ -144,6 +157,6 @@
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20260825-hybrid" defer></script>
+  <script src="assets/app.js?v=20260825-followup" defer></script>
 </body>
 </html>

@@ -1,7 +1,10 @@
 import type pg from "pg";
 import { createCipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { ALLOWED_TAGS, PIPELINE_STAGES, type AllowedTag, type PipelineStage } from "../domain/constants.js";
-import type { ChatMessage, ContactContext, InboundMessage, IngestResult, KnowledgeHit } from "../domain/types.js";
+import type {
+  ChatMessage, ContactContext, InboundMessage, IngestResult, KnowledgeHit, LeadTemperature,
+  MonthlyFollowupCandidate, MonthlyFollowupSettings, QualificationStep,
+} from "../domain/types.js";
 import type { BioecosRepository, ContactUpdate } from "./bioecos.repository.js";
 
 type Queryable = Pick<pg.Pool | pg.PoolClient, "query">;
@@ -137,7 +140,10 @@ export class PostgresRepository implements BioecosRepository {
       throw new Error("Conversão exige confirmação explícita");
     }
     await this.pool.query(
-      `UPDATE leads l SET pipeline_stage_id = ps.id, updated_at = now()
+      `UPDATE leads l SET pipeline_stage_id = ps.id,
+        followup_enabled = CASE WHEN $2 IN ('Convertido', 'Encerrado') THEN false ELSE followup_enabled END,
+        followup_next_at = CASE WHEN $2 IN ('Convertido', 'Encerrado') THEN null ELSE followup_next_at END,
+        updated_at = now()
        FROM pipeline_stages ps JOIN contacts c ON c.project_id = ps.project_id
        WHERE l.id = $1 AND c.id = l.contact_id AND ps.name = $2`,
       [context.leadId, stage],
@@ -157,6 +163,116 @@ export class PostgresRepository implements BioecosRepository {
     await this.dynamicUpdate("contacts", "id", context.contactId, values, contactFields);
     await this.dynamicUpdate("leads", "id", context.leadId, values, leadFields);
     await this.auditForContext(context, "agent", "contact.updated", { fields: Object.keys(values) });
+  }
+
+  async setQualificationStep(context: ContactContext, step: QualificationStep | null): Promise<void> {
+    await this.pool.query("UPDATE leads SET qualification_step = $2, updated_at = now() WHERE id = $1", [context.leadId, step]);
+    await this.auditForContext(context, "automation", "lead.qualification_step", { step });
+  }
+
+  async markLeadTemperature(context: ContactContext, temperature: LeadTemperature, enableMonthlyFollowup: boolean): Promise<void> {
+    await this.pool.query(
+      `UPDATE leads SET temperature = CASE
+          WHEN temperature = 'hot' THEN 'hot'
+          WHEN temperature = 'warm' AND $2 = 'cold' THEN 'warm'
+          ELSE $2
+        END,
+        followup_enabled = CASE WHEN $3 AND NOT followup_opt_out THEN true ELSE followup_enabled END,
+        followup_next_at = CASE WHEN $3 AND NOT followup_opt_out THEN coalesce(followup_next_at, now() + interval '30 days') ELSE followup_next_at END,
+        updated_at = now() WHERE id = $1`,
+      [context.leadId, temperature, enableMonthlyFollowup],
+    );
+    await this.auditForContext(context, "automation", "lead.temperature_changed", { temperature, monthlyFollowupEligible: enableMonthlyFollowup });
+  }
+
+  async optOutMonthlyFollowup(context: ContactContext): Promise<void> {
+    await this.pool.query(
+      `UPDATE leads SET followup_enabled = false, followup_opt_out = true, followup_next_at = null,
+       qualification_step = null, updated_at = now() WHERE id = $1`,
+      [context.leadId],
+    );
+    await this.auditForContext(context, "contact", "followup.opt_out", {});
+  }
+
+  async getMonthlyFollowupSettings(): Promise<MonthlyFollowupSettings> {
+    const result = await this.pool.query<{ enabled: boolean; interval_days: number; max_attempts: number }>(
+      `SELECT s.monthly_followup_enabled AS enabled, s.followup_interval_days AS interval_days,
+        s.followup_max_attempts AS max_attempts
+       FROM automation_settings s JOIN projects p ON p.id = s.project_id WHERE p.slug = 'bioecos'`,
+    );
+    const row = result.rows[0];
+    return row ? { enabled: row.enabled, intervalDays: row.interval_days, maxAttempts: row.max_attempts }
+      : { enabled: false, intervalDays: 30, maxAttempts: 3 };
+  }
+
+  async setMonthlyFollowupEnabled(enabled: boolean): Promise<MonthlyFollowupSettings> {
+    const result = await this.pool.query<{ enabled: boolean; interval_days: number; max_attempts: number }>(
+      `INSERT INTO automation_settings(project_id, monthly_followup_enabled)
+       SELECT id, $1 FROM projects WHERE slug = 'bioecos'
+       ON CONFLICT(project_id) DO UPDATE SET monthly_followup_enabled = excluded.monthly_followup_enabled, updated_at = now()
+       RETURNING monthly_followup_enabled AS enabled, followup_interval_days AS interval_days,
+         followup_max_attempts AS max_attempts`,
+      [enabled],
+    );
+    await this.pool.query(
+      `INSERT INTO audit_logs(project_id, actor, action, details)
+       SELECT id, 'dashboard', 'followup.setting_changed', jsonb_build_object('enabled', $1::boolean)
+       FROM projects WHERE slug = 'bioecos'`,
+      [enabled],
+    );
+    const row = result.rows[0]!;
+    return { enabled: row.enabled, intervalDays: row.interval_days, maxAttempts: row.max_attempts };
+  }
+
+  async getDueMonthlyFollowups(limit: number): Promise<MonthlyFollowupCandidate[]> {
+    const result = await this.pool.query<{
+      lead_id: string; contact_id: string; conversation_id: string; phone: string;
+      name: string | null; course: string; attempts: number;
+    }>(
+      `SELECT l.id AS lead_id, c.id AS contact_id, cv.id AS conversation_id, c.phone, c.name,
+        l.course, l.followup_attempts AS attempts
+       FROM leads l JOIN contacts c ON c.id = l.contact_id
+       JOIN projects p ON p.id = c.project_id AND p.slug = 'bioecos'
+       JOIN automation_settings s ON s.project_id = p.id
+       JOIN pipeline_stages ps ON ps.id = l.pipeline_stage_id
+       JOIN conversations cv ON cv.contact_id = c.id AND cv.status = 'open'
+       WHERE s.monthly_followup_enabled = true AND l.temperature = 'hot'
+         AND l.followup_enabled = true AND l.followup_opt_out = false
+         AND l.course IS NOT NULL AND length(trim(l.course)) > 0
+         AND l.followup_next_at <= now() AND l.followup_attempts < s.followup_max_attempts
+         AND ps.name NOT IN ('Convertido', 'Encerrado')
+         AND cv.automation_paused = false
+         AND cv.last_interaction_at <= now() - make_interval(days => s.followup_interval_days)
+       ORDER BY l.followup_next_at ASC LIMIT $1`,
+      [Math.max(1, Math.min(limit, 100))],
+    );
+    return result.rows.map((row) => ({
+      leadId: row.lead_id, contactId: row.contact_id, conversationId: row.conversation_id,
+      phone: row.phone, name: row.name, course: row.course, attempts: row.attempts,
+    }));
+  }
+
+  async markMonthlyFollowupSent(candidate: MonthlyFollowupCandidate): Promise<void> {
+    await this.pool.query(
+      `UPDATE leads l SET followup_attempts = followup_attempts + 1, followup_last_at = now(),
+        followup_next_at = now() + make_interval(days => s.followup_interval_days),
+        followup_last_error = null, updated_at = now()
+       FROM contacts c JOIN automation_settings s ON s.project_id = c.project_id
+       WHERE l.id = $1 AND c.id = l.contact_id`,
+      [candidate.leadId],
+    );
+    const context = await this.getContext(candidate.conversationId);
+    await this.auditForContext(context, "automation", "followup.sent", { attempt: candidate.attempts + 1, course: candidate.course });
+  }
+
+  async markMonthlyFollowupFailed(candidate: MonthlyFollowupCandidate, error: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE leads SET followup_last_error = $2, followup_next_at = now() + interval '1 day', updated_at = now()
+       WHERE id = $1`,
+      [candidate.leadId, error.slice(0, 500)],
+    );
+    const context = await this.getContext(candidate.conversationId);
+    await this.auditForContext(context, "automation", "followup.failed", { error: error.slice(0, 500) });
   }
 
   async addNote(context: ContactContext, note: string): Promise<void> {
@@ -221,7 +337,16 @@ export class PostgresRepository implements BioecosRepository {
        FROM conversations cv JOIN contacts c ON c.id = cv.contact_id
        WHERE cv.status = 'open' ORDER BY cv.last_interaction_at DESC LIMIT 20`,
     );
-    return { stages: stages.rows, recentConversations: conversations.rows };
+    const followup = await this.pool.query(
+      `SELECT
+        count(*) FILTER (WHERE l.temperature = 'hot')::int AS hot_leads,
+        count(*) FILTER (WHERE l.temperature = 'hot' AND l.followup_enabled AND NOT l.followup_opt_out)::int AS eligible_leads,
+        count(*) FILTER (WHERE l.followup_opt_out)::int AS opt_outs,
+        count(*) FILTER (WHERE l.followup_last_at >= now() - interval '30 days')::int AS sent_last_30_days
+       FROM leads l JOIN contacts c ON c.id = l.contact_id JOIN projects p ON p.id = c.project_id
+       WHERE p.slug = 'bioecos'`,
+    );
+    return { stages: stages.rows, recentConversations: conversations.rows, followup: followup.rows[0] };
   }
 
   async getContactView(contactId: string): Promise<unknown | null> {
@@ -229,6 +354,8 @@ export class PostgresRepository implements BioecosRepository {
       `SELECT c.id, c.project_id, c.phone, c.name, c.email, c.city, c.state, c.company_name, c.profession,
         c.source, c.created_at, c.updated_at, (c.cpf IS NOT NULL) AS has_cpf,
         l.area, l.interest, l.service, l.course, l.objective, l.notes, l.assigned_to,
+        l.qualification_step, l.temperature, l.followup_enabled, l.followup_opt_out,
+        l.followup_next_at, l.followup_last_at, l.followup_attempts, l.followup_last_error,
         ps.name AS pipeline_stage,
         coalesce(array_agg(DISTINCT t.name) FILTER (WHERE t.name IS NOT NULL), '{}') AS tags
        FROM contacts c JOIN leads l ON l.contact_id = c.id
@@ -251,8 +378,11 @@ export class PostgresRepository implements BioecosRepository {
       phone: string; name: string | null; email: string | null; city: string | null; company_name: string | null;
       area: string | null; interest: string | null; service: string | null; course: string | null; objective: string | null;
       pipeline_stage: PipelineStage; automation_paused: boolean; tags: AllowedTag[];
+      qualification_step: QualificationStep | null; temperature: LeadTemperature;
+      followup_enabled: boolean; followup_opt_out: boolean;
     }>(
       `SELECT c.phone, c.name, c.email, c.city, c.company_name, l.area, l.interest, l.service, l.course, l.objective,
+        l.qualification_step, l.temperature, l.followup_enabled, l.followup_opt_out,
         ps.name AS pipeline_stage, cv.automation_paused,
         coalesce(array_agg(t.name) FILTER (WHERE t.name IS NOT NULL), '{}') AS tags
        FROM contacts c JOIN leads l ON l.contact_id = c.id AND l.id = $3 JOIN pipeline_stages ps ON ps.id = l.pipeline_stage_id
@@ -268,6 +398,8 @@ export class PostgresRepository implements BioecosRepository {
       city: row.city, companyName: row.company_name, area: row.area, interest: row.interest,
       service: row.service, course: row.course, objective: row.objective,
       pipelineStage: row.pipeline_stage, tags: row.tags, automationPaused: row.automation_paused,
+      qualificationStep: row.qualification_step, temperature: row.temperature,
+      followupEnabled: row.followup_enabled, followupOptOut: row.followup_opt_out,
     };
   }
 

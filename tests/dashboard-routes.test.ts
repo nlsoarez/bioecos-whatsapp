@@ -103,4 +103,20 @@ describe("rotas do dashboard", () => {
     expect(response.json().base64).toContain("data:image/png;base64,");
     await app.close();
   });
+
+  it("ativa e desativa o acompanhamento mensal somente com sessão válida", async () => {
+    const { app } = await setup();
+    expect((await app.inject({ method: "PUT", url: "/dashboard/settings/monthly-followup", payload: { enabled: true } })).statusCode).toBe(401);
+    const login = await app.inject({
+      method: "POST", url: "/dashboard/auth/login",
+      payload: { username: "operador", password: "dashboard-password-secret" },
+    });
+    const response = await app.inject({
+      method: "PUT", url: "/dashboard/settings/monthly-followup",
+      headers: { authorization: `Bearer ${login.json().token as string}` }, payload: { enabled: true },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ enabled: true, intervalDays: 30, maxAttempts: 3 });
+    await app.close();
+  });
 });

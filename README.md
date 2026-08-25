@@ -10,6 +10,9 @@ Backend greenfield para o atendimento da Bioecos com WhatsApp, Débora, base de 
 - modo híbrido: regras determinísticas e base de conhecimento primeiro, OpenAI apenas como fallback opcional;
 - RAG híbrido: busca semântica com `pgvector` e fallback full-text em português;
 - contatos, leads, conversas, mensagens, tags, pipeline, notas e auditoria;
+- coleta estruturada de nome, e-mail, cidade e objetivo para interessados em cursos;
+- classificação de lead frio, morno e quente sem depender de IA;
+- acompanhamento mensal opcional para leads quentes de cursos, com limite de 3 tentativas, opt-out por `SAIR` e bloqueio após conversão, atendimento humano ou conversa recente;
 - pausa efetiva da IA após handoff ou intervenção humana;
 - seed idempotente de projeto, agente, tags, pipeline e conhecimento;
 - API administrativa mínima para dashboard, contato, pipeline e pausa;
@@ -79,8 +82,10 @@ O site oficial é configurado por `BIOECOS_SITE_URL` e deve permanecer como `htt
 | `GET` | `/admin/contacts/:contactId` | visão consolidada e histórico |
 | `PATCH` | `/admin/conversations/:id/pause` | pausa/reativação manual |
 | `PATCH` | `/admin/conversations/:id/pipeline` | movimentação manual do card |
+| `PUT` | `/dashboard/settings/monthly-followup` | ativa ou desativa o acompanhamento mensal |
 
 As rotas administrativas exigem o cabeçalho `x-admin-key`.
+As rotas de `/dashboard` exigem a sessão autenticada do portal.
 
 ## Banco e importação
 
@@ -108,6 +113,8 @@ O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado 
 O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. Por isso, a implantação usa a imagem oficial `node:22-alpine` e faz clone, instalação e build dentro do próprio contêiner isolado, sem GitHub Actions.
 
 As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI é inserida pelo responsável dentro do dashboard e fica cifrada no volume `bioecos_config_data`; não precisa ser cadastrada no Compose. Sem chave ou saldo, regras conhecidas continuam respondendo e mensagens não reconhecidas são encaminhadas para atendimento humano.
+
+O acompanhamento mensal nasce desativado. A ativação é feita conscientemente no portal; habilitar o recurso não envia contatos antigos imediatamente, pois cada lead quente só vence 30 dias depois do sinal de compra.
 
 ## Limites deliberados
 

@@ -64,6 +64,7 @@ services:
       AUTOMATION_START_HOUR: 0
       AUTOMATION_END_HOUR: 24
       AUTOMATION_MODE: hybrid
+      FOLLOWUP_WORKER_INTERVAL_MS: 300000
       AI_PROVIDER: openai
       AI_MODEL: gpt-4.1-mini
       AI_EMBEDDING_MODEL: text-embedding-3-small

@@ -78,12 +78,13 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.get("/dashboard/overview", async (request) => {
     requireDashboardSession(request, env);
-    const [database, evolutionState, webhookState, ai, dashboard] = await Promise.all([
+    const [database, evolutionState, webhookState, ai, dashboard, followupSettings] = await Promise.all([
       repository.health().catch(() => false),
       evolution.connectionState(),
       evolution.webhookStatus(),
       secrets.status("OPENAI_API_KEY"),
       repository.getDashboard(),
+      repository.getMonthlyFollowupSettings(),
     ]);
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || ai.configured;
     const aiHealth = openai.getHealthStatus();
@@ -96,7 +97,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
         ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL, health: aiHealth },
         whatsapp: { ...evolutionState, webhook: webhookState },
       },
-      metrics: dashboard,
+      metrics: { ...(dashboard as Record<string, unknown>), followupSettings },
       checkedAt: new Date().toISOString(),
     };
   });
@@ -125,6 +126,12 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     requireDashboardSession(request, env);
     await secrets.delete("OPENAI_API_KEY");
     return { configured: false };
+  });
+
+  app.put("/dashboard/settings/monthly-followup", async (request) => {
+    requireDashboardSession(request, env);
+    const { enabled } = z.object({ enabled: z.boolean() }).parse(request.body);
+    return repository.setMonthlyFollowupEnabled(enabled);
   });
 
   app.get("/dashboard/whatsapp", async (request) => {

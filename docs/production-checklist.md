@@ -16,6 +16,7 @@
 - [ ] Configurar backups e teste de restauração do PostgreSQL.
 - [ ] Executar os 12 testes com o número real em ambiente de homologação.
 - [ ] Confirmar que atendente humano pausa a IA e que a reativação é manual.
+- [ ] Homologar a coleta de lead, a classificação quente e o cancelamento por `SAIR`.
+- [ ] Aprovar o texto, a base legal e o limite de 3 contatos antes de ativar o acompanhamento mensal no portal.
 - [ ] Testar reenvio do mesmo webhook e falhas temporárias da Evolution.
 - [ ] Revisar logs para garantir ausência de segredos e dados excessivos.
-

@@ -8,6 +8,8 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 - `services/evolution`: tradução do contrato Evolution v2;
 - `services/conversation`: orquestração do modo híbrido e políticas incontornáveis;
 - `services/hybrid-rules`: respostas determinísticas, classificação e encaminhamento sem IA;
+- `services/qualification`: coleta estruturada e validação dos dados do lead;
+- `services/monthly-followup`: recuperação mensal limitada de leads quentes;
 - `services/openai`: Responses API e ciclo de tools;
 - `services/tool`: validação de argumentos e autorização de ações;
 - `repositories`: persistência e transações;
@@ -19,13 +21,18 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 2. Eventos que não sejam mensagens recebidas, mensagens próprias, grupos e conteúdo sem texto são ignorados.
 3. A mensagem é inserida com `UNIQUE external_message_id`.
 4. Duplicidades encerram o processamento sem gerar nova resposta.
-5. Se `automation_paused = true`, a IA não é chamada.
-6. A busca textual e o motor de regras tentam responder sem IA.
-7. Preço, turma, vaga e condição variável são encaminhados para confirmação humana.
-8. Somente mensagens não resolvidas usam a Responses API, quando a chave está operacional.
-9. Se o fallback de IA estiver indisponível, o contato recebe resposta e é encaminhado para humano.
-10. Tools são validadas por schema e executadas no servidor.
-11. A resposta é enviada pela Evolution e persistida.
+5. Um pedido `SAIR` cancela o acompanhamento mesmo se a conversa estiver pausada.
+6. Se `automation_paused = true`, a IA não é chamada.
+7. A qualificação pendente e o motor de regras tentam responder sem IA.
+8. Preço, turma, vaga e condição variável são encaminhados para confirmação humana.
+9. Somente mensagens não resolvidas usam a Responses API, quando a chave está operacional.
+10. Se o fallback de IA estiver indisponível, o contato recebe resposta e é encaminhado para humano.
+11. Tools são validadas por schema e executadas no servidor.
+12. A resposta é enviada pela Evolution e persistida.
+
+## Acompanhamento mensal
+
+O worker consulta no máximo 25 candidatos a cada cinco minutos, mas cada lead só fica elegível 30 dias depois do sinal de compra e da última interação. Somente leads quentes com curso identificado, conversa aberta e automação ativa entram na seleção. Conversão, encerramento, handoff, conversa recente, três tentativas ou opt-out retiram o contato da fila. O recurso global fica desativado por padrão e é controlado pelo portal autenticado.
 
 ## RAG
 
@@ -47,6 +54,6 @@ O histórico completo nunca é enviado ao modelo. O contexto contém dados estru
 
 ## Contratos externos
 
-O adaptador mira Evolution API v2. O envio utiliza `POST /message/sendText/{instanceName}`, cabeçalho `apikey` e corpo `{ number, textMessage: { text } }`. A entrada reconhece `MESSAGES_UPSERT` e variações de caixa/pontuação observadas no contrato v2.
+O adaptador mira Evolution API v2. O envio utiliza `POST /message/sendText/{instanceName}`, cabeçalho `apikey` e corpo `{ number, text }`, compatível com a versão implantada. A entrada reconhece `MESSAGES_UPSERT` e variações de caixa/pontuação observadas no contrato v2.
 
 A IA utiliza `POST /responses` com custom function tools. Embeddings utilizam `POST /embeddings`. Modelo conversacional e modelo de embedding são variáveis de ambiente.

@@ -19,6 +19,7 @@ byId("remove-api-key")?.addEventListener("click", removeOpenAIKey);
 byId("test-openai-credit")?.addEventListener("click", testOpenAICredit);
 byId("connect-whatsapp")?.addEventListener("click", connectWhatsApp);
 byId("repair-webhook")?.addEventListener("click", repairWebhook);
+byId("toggle-followup")?.addEventListener("click", toggleMonthlyFollowup);
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => showSection(button.dataset.section));
@@ -160,10 +161,40 @@ function renderOverview(overview) {
   byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : "Gerar QR Code";
 
   renderPipeline(Array.isArray(metrics.stages) ? metrics.stages : []);
+  renderFollowup(metrics.followup ?? {}, metrics.followupSettings ?? {});
   const conversations = Array.isArray(metrics.recentConversations) ? metrics.recentConversations : [];
   renderConversations(byId("conversation-list"), conversations.slice(0, 5));
   renderConversations(byId("conversation-list-full"), conversations);
   byId("last-update").textContent = `Atualizado ${formatTime(overview.checkedAt)}`;
+}
+
+function renderFollowup(metrics, settings) {
+  const enabled = Boolean(settings.enabled);
+  setBadge("followup-badge", enabled ? "Ativo" : "Inativo", enabled ? "ok" : "neutral");
+  byId("followup-hot").textContent = String(Number(metrics.hot_leads) || 0);
+  byId("followup-eligible").textContent = String(Number(metrics.eligible_leads) || 0);
+  byId("followup-sent").textContent = String(Number(metrics.sent_last_30_days) || 0);
+  byId("followup-optouts").textContent = String(Number(metrics.opt_outs) || 0);
+  const button = byId("toggle-followup");
+  button.dataset.enabled = String(enabled);
+  button.textContent = enabled ? "Desativar acompanhamento" : "Ativar acompanhamento";
+  button.classList.toggle("danger-action", enabled);
+}
+
+async function toggleMonthlyFollowup() {
+  const button = byId("toggle-followup");
+  const currentlyEnabled = button.dataset.enabled === "true";
+  if (!currentlyEnabled && !window.confirm("Ao ativar, leads quentes elegíveis poderão receber mensagens automáticas pelo WhatsApp a cada 30 dias, no máximo 3 vezes. Deseja ativar?")) return;
+  button.disabled = true;
+  try {
+    await api("/dashboard/settings/monthly-followup", { method: "PUT", body: { enabled: !currentlyEnabled } });
+    setFeedback(byId("followup-feedback"), currentlyEnabled ? "Acompanhamento mensal desativado." : "Acompanhamento mensal ativado.", "success");
+    await refreshOverview();
+  } catch (error) {
+    setFeedback(byId("followup-feedback"), error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function testOpenAICredit() {
