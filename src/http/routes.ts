@@ -36,20 +36,18 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const aiSecret = await secrets.status("OPENAI_API_KEY");
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || aiSecret.configured;
     return reply.code(database ? 200 : 503).send({
-      status: database ? (aiConfigured ? "ok" : "setup_required") : "degraded",
+      status: database ? "ok" : "degraded",
       backend: true,
       database,
       evolution: { ...evolutionState, webhook: webhookState },
       ai: { configured: aiConfigured, provider: env.AI_PROVIDER, model: env.AI_MODEL },
+      automation: { mode: env.AUTOMATION_MODE, aiFallback: aiConfigured },
     });
   });
 
   app.post("/webhooks/evolution", async (request, reply) => {
     if (env.EVOLUTION_WEBHOOK_SECRET && request.headers["x-webhook-secret"] !== env.EVOLUTION_WEBHOOK_SECRET) {
       return reply.code(401).send({ error: "Webhook não autorizado" });
-    }
-    if (!env.OPENAI_API_KEY && !(await secrets.status("OPENAI_API_KEY")).configured) {
-      return reply.code(503).send({ accepted: false, reason: "ai_not_configured" });
     }
     const inbound = parseEvolutionWebhook(request.body);
     if (!inbound) return reply.code(202).send({ accepted: false, reason: "ignored_event" });
@@ -90,10 +88,11 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || ai.configured;
     const aiHealth = openai.getHealthStatus();
     return {
-      status: database && evolutionState.state === "open" && webhookState.healthy && aiConfigured && aiHealth.state !== "insufficient_quota" ? "operational" : "attention",
+      status: database && evolutionState.state === "open" && webhookState.healthy ? "operational" : "attention",
       services: {
         api: true,
         database,
+        automation: { mode: env.AUTOMATION_MODE, aiFallback: aiConfigured && aiHealth.state !== "insufficient_quota" },
         ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL, health: aiHealth },
         whatsapp: { ...evolutionState, webhook: webhookState },
       },
@@ -135,8 +134,6 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.post("/dashboard/whatsapp/connect", async (request) => {
     requireDashboardSession(request, env);
-    const aiConfigured = Boolean(env.OPENAI_API_KEY) || (await secrets.status("OPENAI_API_KEY")).configured;
-    if (!aiConfigured) throw httpError(409, "Configure e valide a chave OpenAI antes de conectar o WhatsApp");
     return evolution.connect();
   });
 

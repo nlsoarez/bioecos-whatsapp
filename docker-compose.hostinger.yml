@@ -63,6 +63,7 @@ services:
       AUTOMATION_TIMEZONE: America/Sao_Paulo
       AUTOMATION_START_HOUR: 0
       AUTOMATION_END_HOUR: 24
+      AUTOMATION_MODE: hybrid
       AI_PROVIDER: openai
       AI_MODEL: gpt-4.1-mini
       AI_EMBEDDING_MODEL: text-embedding-3-small

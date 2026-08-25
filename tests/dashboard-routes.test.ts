@@ -85,4 +85,22 @@ describe("rotas do dashboard", () => {
     expect(await secrets.get("OPENAI_API_KEY")).toBe(apiKey);
     await app.close();
   });
+
+  it("permite conectar o WhatsApp sem chave OpenAI no modo híbrido", async () => {
+    const { app } = await setup();
+    const login = await app.inject({
+      method: "POST",
+      url: "/dashboard/auth/login",
+      payload: { username: "operador", password: "dashboard-password-secret" },
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/dashboard/whatsapp/connect",
+      headers: { authorization: `Bearer ${login.json().token as string}` },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().base64).toContain("data:image/png;base64,");
+    await app.close();
+  });
 });

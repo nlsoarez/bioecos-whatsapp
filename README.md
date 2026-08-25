@@ -7,14 +7,14 @@ Backend greenfield para o atendimento da Bioecos com WhatsApp, Débora, base de 
 - webhook Evolution API v2 em `POST /webhooks/evolution`;
 - bloqueio de eventos irrelevantes, mensagens próprias, grupos e mensagens duplicadas;
 - envio de texto pela rota Evolution v2 `POST /message/sendText/{instanceName}`;
-- agente Débora pela OpenAI Responses API com tools validadas;
+- modo híbrido: regras determinísticas e base de conhecimento primeiro, OpenAI apenas como fallback opcional;
 - RAG híbrido: busca semântica com `pgvector` e fallback full-text em português;
 - contatos, leads, conversas, mensagens, tags, pipeline, notas e auditoria;
 - pausa efetiva da IA após handoff ou intervenção humana;
 - seed idempotente de projeto, agente, tags, pipeline e conhecimento;
 - API administrativa mínima para dashboard, contato, pipeline e pausa;
 - painel operacional autenticado para configurar a chave OpenAI, monitorar serviços e gerar o QR Code do WhatsApp;
-- 12 cenários de homologação exigidos, além de testes do webhook.
+- cenários de homologação do atendimento, do fallback e do webhook.
 
 O projeto não usa n8n.
 
@@ -25,8 +25,8 @@ WhatsApp
   → Evolution API v2
   → POST /webhooks/evolution
   → ConversationService
-      → políticas determinísticas de segurança
-      → Débora / OpenAI Responses API
+      → regras determinísticas e respostas seguras
+      → Débora / OpenAI Responses API (fallback opcional)
       → tools validadas
       → RAG PostgreSQL + pgvector
       → CRM e auditoria
@@ -40,7 +40,7 @@ O portal técnico estático fica em `docs/` e é publicado pelo GitHub Pages dir
 
 ## Execução local
 
-Pré-requisitos: Node.js 22+, Docker com Compose e credenciais próprias de OpenAI/Evolution.
+Pré-requisitos: Node.js 22+, Docker com Compose e credenciais da Evolution. A chave OpenAI é opcional no modo híbrido.
 
 ```bash
 cp .env.example .env
@@ -61,7 +61,7 @@ No Windows/PowerShell, copie o arquivo com `Copy-Item .env.example .env`.
 Não coloque segredos no código ou no Git. Configure no `.env` ou em um gerenciador de segredos:
 
 - `DATABASE_URL`;
-- `OPENAI_API_KEY`, `AI_PROVIDER`, `AI_MODEL` e `AI_EMBEDDING_MODEL`;
+- opcionalmente `OPENAI_API_KEY`, `AI_PROVIDER`, `AI_MODEL` e `AI_EMBEDDING_MODEL` para o fallback por IA;
 - `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE_NAME`;
 - `ADMIN_API_KEY`;
 - `PII_ENCRYPTION_KEY`, usada para cifrar CPF com AES-256-GCM;
@@ -107,11 +107,9 @@ O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado 
 
 O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. Por isso, a implantação usa a imagem oficial `node:22-alpine` e faz clone, instalação e build dentro do próprio contêiner isolado, sem GitHub Actions.
 
-As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI é inserida pelo responsável dentro do dashboard e fica cifrada no volume `bioecos_config_data`; não precisa ser cadastrada no Compose. Sem uma chave válida, a rota de saúde retorna `setup_required`, o webhook recusa mensagens e o painel não libera o QR Code do WhatsApp.
+As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI é inserida pelo responsável dentro do dashboard e fica cifrada no volume `bioecos_config_data`; não precisa ser cadastrada no Compose. Sem chave ou saldo, regras conhecidas continuam respondendo e mensagens não reconhecidas são encaminhadas para atendimento humano.
 
 ## Limites deliberados
 
-- Não há painel web visual; existe uma API administrativa segura para ser consumida por um painel futuro.
 - Não há fila distribuída. O webhook é processado de forma síncrona; para alto volume, introduza uma fila durável antes de produção.
-- A Evolution API não foi instalada neste computador. O adaptador segue o contrato v2 documentado, mas precisa ser verificado contra a versão efetivamente implantada.
 - Preços, turmas, vagas, descontos, responsáveis e horários humanos permanecem dados operacionais pendentes.

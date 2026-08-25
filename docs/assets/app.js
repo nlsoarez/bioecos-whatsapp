@@ -132,11 +132,11 @@ function renderOverview(overview) {
     invalid_key: "Chave inválida",
     rate_limited: "Limite temporário",
     unavailable: "Indisponível",
-    not_tested: aiConfigured ? "Crédito não testado" : "Configuração pendente",
+    not_tested: aiConfigured ? "Crédito não testado" : "Fallback opcional",
   };
   const aiOperational = aiConfigured && aiHealth.state === "operational";
   setService("ai", aiOperational, aiLabels[aiHealth.state] ?? "Requer atenção", aiConfigured && aiHealth.state === "not_tested");
-  byId("ai-model").textContent = services.ai?.model || "OpenAI";
+  byId("ai-model").textContent = `Modo híbrido · ${services.ai?.model || "OpenAI"}`;
   byId("openai-credit-status").textContent = aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Chave não configurada";
   byId("openai-credit-detail").textContent = aiConfigured ? aiHealth.message : "Configure uma chave para testar.";
   byId("test-openai-credit").disabled = !aiConfigured;
@@ -153,10 +153,10 @@ function renderOverview(overview) {
   byId("whatsapp-disconnected").hidden = whatsappConnected;
 
   const aiBadgeState = aiOperational ? "ok" : (aiHealth.state === "insufficient_quota" || aiHealth.state === "invalid_key" ? "danger" : "warning");
-  setBadge("ai-badge", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Pendente", aiBadgeState);
-  setBadge("integration-ai-state", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Pendente", aiBadgeState);
+  setBadge("ai-badge", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Opcional", aiBadgeState);
+  setBadge("integration-ai-state", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Opcional", aiBadgeState);
   byId("remove-api-key").hidden = !aiConfigured;
-  byId("connect-whatsapp").disabled = !aiConfigured || whatsappConnected;
+  byId("connect-whatsapp").disabled = whatsappConnected;
   byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : "Gerar QR Code";
 
   renderPipeline(Array.isArray(metrics.stages) ? metrics.stages : []);

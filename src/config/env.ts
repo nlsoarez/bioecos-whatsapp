@@ -23,6 +23,7 @@ const schema = z.object({
   AUTOMATION_TIMEZONE: z.string().default("America/Sao_Paulo"),
   AUTOMATION_START_HOUR: z.coerce.number().int().min(0).max(23).default(0),
   AUTOMATION_END_HOUR: z.coerce.number().int().min(1).max(24).default(24),
+  AUTOMATION_MODE: z.literal("hybrid").default("hybrid"),
   AI_PROVIDER: z.enum(["openai"]).default("openai"),
   AI_MODEL: z.string().min(1).default("gpt-4.1-mini"),
   AI_EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),

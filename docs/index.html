@@ -79,7 +79,7 @@
         <div id="global-alert" class="global-alert" hidden></div>
         <div class="status-grid" aria-label="Estado dos serviços">
           <article class="status-card"><div class="status-card-head"><span>API</span><i id="api-dot"></i></div><strong id="api-status">Verificando</strong><small>Backend da automação</small></article>
-          <article class="status-card"><div class="status-card-head"><span>IA</span><i id="ai-dot"></i></div><strong id="ai-status">Verificando</strong><small id="ai-model">OpenAI</small></article>
+          <article class="status-card"><div class="status-card-head"><span>IA — fallback</span><i id="ai-dot"></i></div><strong id="ai-status">Verificando</strong><small id="ai-model">Modo híbrido</small></article>
           <article class="status-card"><div class="status-card-head"><span>WhatsApp</span><i id="whatsapp-dot"></i></div><strong id="whatsapp-status">Verificando</strong><small>Evolution API</small></article>
           <article class="status-card"><div class="status-card-head"><span>Banco</span><i id="database-dot"></i></div><strong id="database-status">Verificando</strong><small>PostgreSQL + pgvector</small></article>
         </div>
@@ -87,7 +87,8 @@
         <div class="content-grid">
           <article class="panel setup-panel">
             <div class="panel-heading"><div><span class="panel-kicker">Configuração essencial</span><h2>Inteligência artificial</h2></div><span id="ai-badge" class="badge warning">Pendente</span></div>
-            <p class="panel-description">A chave é validada pela OpenAI e armazenada cifrada no servidor. Ela nunca volta para o navegador.</p>
+            <p class="panel-description"><span id="automation-mode-badge" class="badge ok">Modo híbrido ativo</span> Regras e respostas seguras são usadas primeiro. A OpenAI é opcional e só entra quando as regras não resolvem.</p>
+            <p class="panel-description">Se configurada, a chave é validada pela OpenAI e armazenada cifrada no servidor. Ela nunca volta para o navegador.</p>
             <div class="integration-health">
               <div><span>Disponibilidade de crédito</span><strong id="openai-credit-status">Ainda não testada</strong><small id="openai-credit-detail">A chave comum não informa o saldo exato.</small></div>
               <div class="health-actions"><button id="test-openai-credit" class="secondary-action" type="button">Testar agora</button><a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noopener noreferrer">Ver faturamento na OpenAI ↗</a></div>
@@ -104,7 +105,7 @@
             <div class="panel-heading"><div><span class="panel-kicker">Canal de atendimento</span><h2>WhatsApp</h2></div><span id="whatsapp-badge" class="badge neutral">Desconectado</span></div>
             <div id="whatsapp-disconnected" class="whatsapp-state">
               <div class="phone-mark" aria-hidden="true">W</div>
-              <div><strong>Conecte o número da Bioecos</strong><p>O QR Code só é liberado depois que a chave OpenAI estiver válida.</p></div>
+              <div><strong>Conecte o número da Bioecos</strong><p>O atendimento por regras funciona mesmo sem chave ou saldo da OpenAI.</p></div>
             </div>
             <div id="qr-area" class="qr-area" hidden>
               <img id="qr-image" alt="QR Code para conectar o WhatsApp">
@@ -130,7 +131,7 @@
       <section id="section-integrations" class="dashboard-section" hidden>
         <div class="section-title"><span class="page-kicker">Configuração</span><h2>Integrações</h2><p>Gerencie as credenciais e o canal usados pela automação.</p></div>
         <div class="integration-summary">
-          <article class="panel"><span class="integration-icon">AI</span><h3>OpenAI</h3><p>Modelo de respostas e embeddings da base de conhecimento.</p><span id="integration-ai-state" class="badge warning">Pendente</span></article>
+          <article class="panel"><span class="integration-icon">AI</span><h3>OpenAI</h3><p>Fallback opcional para mensagens que as regras não reconhecerem.</p><span id="integration-ai-state" class="badge warning">Opcional</span></article>
           <article class="panel"><span class="integration-icon">WA</span><h3>Evolution API</h3><p>Conexão segura com o WhatsApp da Bioecos.</p><span id="integration-wa-state" class="badge neutral">Desconectado</span></article>
         </div>
       </section>
@@ -143,6 +144,6 @@
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20260825-health" defer></script>
+  <script src="assets/app.js?v=20260825-hybrid" defer></script>
 </body>
 </html>

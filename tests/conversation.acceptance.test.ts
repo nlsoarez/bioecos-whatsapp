@@ -131,5 +131,27 @@ describe("homologação Bioecos", () => {
     expect(result.response).not.toContain("Digite o número");
     expect(result.response).toContain("renovação");
   });
-});
 
+  it("13. regra conhecida responde sem chamar a OpenAI", async () => {
+    const s = setup();
+    const result = await s.service.handle(inbound("Vocês têm curso de fitoterapia?"));
+    expect(result.response).toContain("Fitoterapia");
+    expect(s.agent.calls).toBe(0);
+  });
+
+  it("14. mensagem não coberta usa a IA como fallback", async () => {
+    const s = setup();
+    const result = await s.service.handle(inbound("Quero entender melhor como vocês podem me orientar"));
+    expect(result.response).toContain("responder diretamente");
+    expect(s.agent.calls).toBe(1);
+  });
+
+  it("15. falha da IA encaminha para humano em vez de deixar o contato sem resposta", async () => {
+    const s = setup();
+    s.agent.respond = async () => { throw new Error("Sem crédito"); };
+    const result = await s.service.handle(inbound("Tenho uma dúvida diferente"));
+    expect(result.response).toContain("equipe responsável");
+    expect(s.repository.context.automationPaused).toBe(true);
+    expect(s.sender.sent).toHaveLength(1);
+  });
+});
