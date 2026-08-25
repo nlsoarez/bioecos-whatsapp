@@ -1,3 +1,3 @@
 window.BIOECOS_CONFIG = {
-  apiBaseUrl: "https://bioecos-api.179-198-124-8.sslip.io",
+  apiBaseUrl: "https://evolution.179-198-124-8.sslip.io/bioecos",
 };
