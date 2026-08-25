@@ -34,6 +34,7 @@ services:
         fi
         npm ci --include=dev
         npm run build
+        cp -R src/db/migrations dist/src/db/migrations
         npm prune --omit=dev
         npm run start:docker
     depends_on:
