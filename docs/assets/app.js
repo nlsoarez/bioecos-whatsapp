@@ -54,7 +54,8 @@ loginForm?.addEventListener("submit", async (event) => {
 
 async function api(path, options = {}) {
   if (!API_BASE_URL) throw new Error("A API segura do painel ainda não está publicada.");
-  const headers = { "content-type": "application/json", ...(options.headers ?? {}) };
+  const headers = { ...(options.headers ?? {}) };
+  if (options.body !== undefined) headers["content-type"] = "application/json";
   if (options.authenticated !== false) {
     const token = sessionStorage.getItem(SESSION_KEY);
     if (!token) throw new Error("Sua sessão expirou. Entre novamente.");
