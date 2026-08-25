@@ -22,6 +22,14 @@ export interface EvolutionQrCode {
   count: number;
 }
 
+export interface EvolutionWebhookState {
+  configured: boolean;
+  reachable: boolean;
+  healthy: boolean;
+  enabled: boolean;
+  message: string;
+}
+
 export class EvolutionService implements MessageSender {
   constructor(private readonly env: Env, private readonly request: typeof fetch = fetch) {}
 
@@ -90,12 +98,73 @@ export class EvolutionService implements MessageSender {
     if (!base64.startsWith("data:image/png;base64,") || base64.length > 2_000_000) {
       throw new Error("A Evolution não retornou um QR Code válido");
     }
+    await this.configureWebhook();
     return {
       base64,
       pairingCode: typeof result.pairingCode === "string" ? result.pairingCode : null,
       count: typeof result.count === "number" ? result.count : 0,
     };
   }
+
+  async webhookStatus(): Promise<EvolutionWebhookState> {
+    const expectedUrl = this.webhookUrl();
+    if (!this.env.EVOLUTION_API_KEY || !expectedUrl) {
+      return { configured: false, reachable: false, healthy: false, enabled: false, message: "Webhook não configurado" };
+    }
+    const url = `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/webhook/find/${encodeURIComponent(this.env.EVOLUTION_INSTANCE_NAME)}`;
+    try {
+      const response = await this.request(url, { headers: { apikey: this.env.EVOLUTION_API_KEY } });
+      const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok) return { configured: true, reachable: false, healthy: false, enabled: false, message: `Evolution respondeu ${response.status}` };
+      const webhook = result.webhook && typeof result.webhook === "object" ? result.webhook as Record<string, unknown> : result;
+      const configuredUrl = String(webhook.url ?? webhook.webhookUrl ?? "").replace(/\/$/, "");
+      const events = Array.isArray(webhook.events) ? webhook.events.map(normalizeEvent) : [];
+      const enabled = webhook.enabled !== false && Boolean(configuredUrl);
+      const healthy = enabled && configuredUrl === expectedUrl && events.includes("MESSAGES_UPSERT");
+      return {
+        configured: Boolean(configuredUrl),
+        reachable: true,
+        healthy,
+        enabled,
+        message: healthy ? "Recebimento de mensagens ativo" : "Webhook de mensagens precisa ser ativado",
+      };
+    } catch {
+      return { configured: true, reachable: false, healthy: false, enabled: false, message: "Não foi possível verificar o webhook" };
+    }
+  }
+
+  async configureWebhook(): Promise<EvolutionWebhookState> {
+    if (!this.env.EVOLUTION_API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
+    const webhookUrl = this.webhookUrl();
+    if (!webhookUrl) throw new Error("PUBLIC_API_URL não configurada");
+    const url = `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/webhook/set/${encodeURIComponent(this.env.EVOLUTION_INSTANCE_NAME)}`;
+    const response = await this.request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", apikey: this.env.EVOLUTION_API_KEY },
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          headers: { "x-webhook-secret": this.env.EVOLUTION_WEBHOOK_SECRET },
+          byEvents: false,
+          base64: false,
+          events: ["MESSAGES_UPSERT"],
+        },
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`Não foi possível ativar o webhook (${response.status}): ${JSON.stringify(result)}`);
+    return this.webhookStatus();
+  }
+
+  private webhookUrl(): string {
+    const publicUrl = this.env.PUBLIC_API_URL.trim().replace(/\/$/, "");
+    return publicUrl ? `${publicUrl}/webhooks/evolution` : "";
+  }
+}
+
+function normalizeEvent(event: unknown): string {
+  return String(event).toUpperCase().replace(/[.-]/g, "_");
 }
 
 export function normalizePhone(input: string): string {

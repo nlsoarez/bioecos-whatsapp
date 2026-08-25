@@ -26,7 +26,21 @@ export interface AgentClient {
 type ResponseOutputItem = Record<string, unknown> & { type?: string; name?: string; arguments?: string; call_id?: string };
 type OpenAIResponse = { id?: string; output?: ResponseOutputItem[]; output_text?: string; error?: unknown };
 
+export type OpenAIHealthState = "not_tested" | "operational" | "insufficient_quota" | "invalid_key" | "rate_limited" | "unavailable";
+
+export interface OpenAIHealthStatus {
+  state: OpenAIHealthState;
+  checkedAt: string | null;
+  message: string;
+}
+
 export class OpenAIResponsesClient implements AgentClient {
+  private healthStatus: OpenAIHealthStatus = {
+    state: "not_tested",
+    checkedAt: null,
+    message: "Crédito ainda não testado",
+  };
+
   constructor(
     private readonly env: Env,
     private readonly request: typeof fetch = fetch,
@@ -105,6 +119,38 @@ export class OpenAIResponsesClient implements AgentClient {
       headers: { authorization: `Bearer ${apiKey}` },
     });
     if (!response.ok) throw new Error(response.status === 401 ? "Chave OpenAI inválida" : `Não foi possível validar a chave OpenAI (${response.status})`);
+    this.healthStatus = { state: "not_tested", checkedAt: null, message: "Chave válida; crédito ainda não testado" };
+  }
+
+  getHealthStatus(): OpenAIHealthStatus {
+    return { ...this.healthStatus };
+  }
+
+  async testCredit(): Promise<OpenAIHealthStatus> {
+    const apiKey = await this.apiKeyProvider();
+    if (!apiKey) {
+      this.healthStatus = health("invalid_key", "Chave OpenAI não configurada");
+      return this.getHealthStatus();
+    }
+    const response = await this.request(`${this.env.OPENAI_BASE_URL.replace(/\/$/, "")}/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: this.env.AI_MODEL,
+        input: "Responda apenas OK.",
+        max_output_tokens: 8,
+        store: false,
+      }),
+    }).catch(() => null);
+    if (!response) {
+      this.healthStatus = health("unavailable", "OpenAI indisponível ou sem conexão");
+      return this.getHealthStatus();
+    }
+    const result = await response.json().catch(() => ({}));
+    this.healthStatus = response.ok
+      ? health("operational", "Crédito disponível e chave operacional")
+      : classifyOpenAIError(response.status, result);
+    return this.getHealthStatus();
   }
 
   private async post(path: string, body: unknown, apiKey: string): Promise<unknown> {
@@ -114,9 +160,31 @@ export class OpenAIResponsesClient implements AgentClient {
       body: JSON.stringify(body),
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`OpenAI API respondeu ${response.status}: ${JSON.stringify(result)}`);
+    if (!response.ok) {
+      this.healthStatus = classifyOpenAIError(response.status, result);
+      throw new Error(this.healthStatus.message);
+    }
+    this.healthStatus = health("operational", "Crédito disponível e chave operacional");
     return result;
   }
+}
+
+function health(state: OpenAIHealthState, message: string): OpenAIHealthStatus {
+  return { state, message, checkedAt: new Date().toISOString() };
+}
+
+function classifyOpenAIError(status: number, result: unknown): OpenAIHealthStatus {
+  const error = result && typeof result === "object" && "error" in result
+    ? (result as { error?: unknown }).error
+    : result;
+  const details = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const code = String(details.code ?? details.type ?? "").toLowerCase();
+  if (status === 401) return health("invalid_key", "Chave OpenAI inválida ou revogada");
+  if (status === 429 && (code.includes("insufficient_quota") || code.includes("billing"))) {
+    return health("insufficient_quota", "Sem crédito ou limite de gastos atingido");
+  }
+  if (status === 429) return health("rate_limited", "Limite temporário de requisições atingido");
+  return health("unavailable", `OpenAI indisponível (${status})`);
 }
 
 function extractOutputText(output: ResponseOutputItem[]): string {

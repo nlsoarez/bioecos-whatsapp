@@ -88,6 +88,10 @@
           <article class="panel setup-panel">
             <div class="panel-heading"><div><span class="panel-kicker">Configuração essencial</span><h2>Inteligência artificial</h2></div><span id="ai-badge" class="badge warning">Pendente</span></div>
             <p class="panel-description">A chave é validada pela OpenAI e armazenada cifrada no servidor. Ela nunca volta para o navegador.</p>
+            <div class="integration-health">
+              <div><span>Disponibilidade de crédito</span><strong id="openai-credit-status">Ainda não testada</strong><small id="openai-credit-detail">A chave comum não informa o saldo exato.</small></div>
+              <div class="health-actions"><button id="test-openai-credit" class="secondary-action" type="button">Testar agora</button><a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noopener noreferrer">Ver faturamento na OpenAI ↗</a></div>
+            </div>
             <form id="openai-form" class="key-form">
               <label for="openai-key">OpenAI API Key</label>
               <div class="key-field"><input id="openai-key" type="password" autocomplete="off" placeholder="sk-proj-••••••••••••••••" minlength="20" required><button id="toggle-api-key" type="button">Mostrar</button></div>
@@ -107,6 +111,7 @@
               <div><strong>Escaneie pelo WhatsApp</strong><p>Configurações → Dispositivos conectados → Conectar dispositivo.</p><small id="qr-countdown">QR Code temporário</small></div>
             </div>
             <button id="connect-whatsapp" class="primary-action wide-action" type="button">Gerar QR Code</button>
+            <div class="webhook-health"><span id="whatsapp-webhook-status">Recebimento ainda não verificado</span><button id="repair-webhook" class="secondary-action" type="button" hidden>Ativar recebimento</button></div>
             <p id="whatsapp-feedback" class="inline-feedback" role="status"></p>
           </article>
 
@@ -138,6 +143,6 @@
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20260825-qr-fix" defer></script>
+  <script src="assets/app.js?v=20260825-health" defer></script>
 </body>
 </html>

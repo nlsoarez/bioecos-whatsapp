@@ -81,6 +81,7 @@ describe("rotas do dashboard", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.body).not.toContain(apiKey);
+    expect(response.json().health.state).toBe("operational");
     expect(await secrets.get("OPENAI_API_KEY")).toBe(apiKey);
     await app.close();
   });

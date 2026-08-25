@@ -68,6 +68,7 @@ services:
       AI_EMBEDDING_MODEL: text-embedding-3-small
       OPENAI_API_KEY: ${BIOECOS_OPENAI_API_KEY:-}
       OPENAI_BASE_URL: https://api.openai.com/v1
+      PUBLIC_API_URL: https://evolution.179-198-124-8.sslip.io/bioecos
       EVOLUTION_API_VERSION: 2
       EVOLUTION_API_URL: https://evolution.179-198-124-8.sslip.io
       EVOLUTION_API_KEY: ${BIOECOS_EVOLUTION_API_KEY:?Defina BIOECOS_EVOLUTION_API_KEY}

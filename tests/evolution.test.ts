@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { normalizePhone, parseEvolutionWebhook } from "../src/services/evolution.service.js";
+import { loadEnv } from "../src/config/env.js";
+import { EvolutionService, normalizePhone, parseEvolutionWebhook } from "../src/services/evolution.service.js";
 
 describe("Evolution webhook v2", () => {
   it("normaliza e extrai MESSAGES_UPSERT", () => {
@@ -25,5 +26,31 @@ describe("Evolution webhook v2", () => {
   it("rejeita telefone inválido", () => {
     expect(() => normalizePhone("123")).toThrow("inválido");
   });
-});
 
+  it("configura e confirma o recebimento com segredo no cabeçalho", async () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgresql://test:test@localhost/test",
+      EVOLUTION_API_URL: "https://evolution.example.com",
+      EVOLUTION_API_KEY: "evolution-secret",
+      EVOLUTION_INSTANCE_NAME: "bioecos",
+      EVOLUTION_WEBHOOK_SECRET: "webhook-secret",
+      PUBLIC_API_URL: "https://api.example.com/bioecos",
+      ADMIN_API_KEY: "admin-secret-key",
+    });
+    let configuredBody: Record<string, unknown> | null = null;
+    const request = async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        configuredBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({ ok: true }), { status: 201 });
+      }
+      return new Response(JSON.stringify({
+        enabled: true,
+        url: "https://api.example.com/bioecos/webhooks/evolution",
+        events: ["MESSAGES_UPSERT"],
+      }), { status: 200 });
+    };
+    const evolution = new EvolutionService(env, request as typeof fetch);
+    await expect(evolution.configureWebhook()).resolves.toMatchObject({ healthy: true });
+    expect(configuredBody).toMatchObject({ webhook: { headers: { "x-webhook-secret": "webhook-secret" } } });
+  });
+});

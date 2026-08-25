@@ -80,20 +80,22 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.get("/dashboard/overview", async (request) => {
     requireDashboardSession(request, env);
-    const [database, evolutionState, ai, dashboard] = await Promise.all([
+    const [database, evolutionState, webhookState, ai, dashboard] = await Promise.all([
       repository.health().catch(() => false),
       evolution.connectionState(),
+      evolution.webhookStatus(),
       secrets.status("OPENAI_API_KEY"),
       repository.getDashboard(),
     ]);
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || ai.configured;
+    const aiHealth = openai.getHealthStatus();
     return {
-      status: database && evolutionState.reachable && aiConfigured ? "operational" : "attention",
+      status: database && evolutionState.state === "open" && webhookState.healthy && aiConfigured && aiHealth.state !== "insufficient_quota" ? "operational" : "attention",
       services: {
         api: true,
         database,
-        ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL },
-        whatsapp: evolutionState,
+        ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL, health: aiHealth },
+        whatsapp: { ...evolutionState, webhook: webhookState },
       },
       metrics: dashboard,
       checkedAt: new Date().toISOString(),
@@ -109,7 +111,15 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
       return reply.code(400).send({ error: error instanceof Error ? error.message : "Chave OpenAI inválida" });
     }
     await secrets.set("OPENAI_API_KEY", apiKey);
-    return { configured: true, updatedAt: new Date().toISOString() };
+    const health = await openai.testCredit();
+    return { configured: true, updatedAt: new Date().toISOString(), health };
+  });
+
+  app.post("/dashboard/openai/test", async (request) => {
+    requireDashboardSession(request, env);
+    const aiConfigured = Boolean(env.OPENAI_API_KEY) || (await secrets.status("OPENAI_API_KEY")).configured;
+    if (!aiConfigured) throw httpError(409, "Configure a chave OpenAI antes de testar o crédito");
+    return openai.testCredit();
   });
 
   app.delete("/dashboard/settings/openai-key", async (request) => {
@@ -128,6 +138,11 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || (await secrets.status("OPENAI_API_KEY")).configured;
     if (!aiConfigured) throw httpError(409, "Configure e valide a chave OpenAI antes de conectar o WhatsApp");
     return evolution.connect();
+  });
+
+  app.post("/dashboard/whatsapp/webhook", async (request) => {
+    requireDashboardSession(request, env);
+    return evolution.configureWebhook();
   });
 
   app.get("/admin/dashboard", async (request) => {

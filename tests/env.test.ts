@@ -12,6 +12,7 @@ const productionEnv = {
   PII_ENCRYPTION_KEY: "pii-secret",
   DASHBOARD_PASSWORD: "dashboard-password-secret",
   DASHBOARD_SESSION_SECRET: "dashboard-session-secret-at-least-32-chars",
+  PUBLIC_API_URL: "https://api.example.com/bioecos",
 };
 
 describe("configuração de produção", () => {

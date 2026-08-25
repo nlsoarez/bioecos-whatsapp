@@ -28,6 +28,7 @@ const schema = z.object({
   AI_EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
   OPENAI_API_KEY: z.string().default(""),
   OPENAI_BASE_URL: z.url().default("https://api.openai.com/v1"),
+  PUBLIC_API_URL: z.string().default(""),
   EVOLUTION_API_VERSION: z.literal("2").default("2"),
   EVOLUTION_API_URL: z.url(),
   EVOLUTION_API_KEY: z.string().default(""),
@@ -47,6 +48,9 @@ const schema = z.object({
   }
   if (env.DASHBOARD_SESSION_SECRET === "change-this-session-secret-32-chars") {
     context.addIssue({ code: "custom", path: ["DASHBOARD_SESSION_SECRET"], message: "DASHBOARD_SESSION_SECRET deve ser alterada em produção" });
+  }
+  if (!env.PUBLIC_API_URL) {
+    context.addIssue({ code: "custom", path: ["PUBLIC_API_URL"], message: "PUBLIC_API_URL é obrigatória em produção" });
   }
 });
 

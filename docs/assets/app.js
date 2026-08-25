@@ -16,7 +16,9 @@ byId("logout-button")?.addEventListener("click", logout);
 byId("refresh-button")?.addEventListener("click", refreshOverview);
 byId("openai-form")?.addEventListener("submit", saveOpenAIKey);
 byId("remove-api-key")?.addEventListener("click", removeOpenAIKey);
+byId("test-openai-credit")?.addEventListener("click", testOpenAICredit);
 byId("connect-whatsapp")?.addEventListener("click", connectWhatsApp);
+byId("repair-webhook")?.addEventListener("click", repairWebhook);
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => showSection(button.dataset.section));
@@ -122,18 +124,37 @@ function renderOverview(overview) {
   const { services = {}, metrics = {} } = overview;
   setService("api", Boolean(services.api), services.api ? "Operacional" : "Indisponível");
   setService("database", Boolean(services.database), services.database ? "Conectado" : "Indisponível");
-  setService("ai", Boolean(services.ai?.configured), services.ai?.configured ? "Configurada" : "Configuração pendente");
+  const aiConfigured = Boolean(services.ai?.configured);
+  const aiHealth = services.ai?.health ?? { state: "not_tested", message: "Crédito ainda não testado" };
+  const aiLabels = {
+    operational: "Operacional",
+    insufficient_quota: "Sem crédito",
+    invalid_key: "Chave inválida",
+    rate_limited: "Limite temporário",
+    unavailable: "Indisponível",
+    not_tested: aiConfigured ? "Crédito não testado" : "Configuração pendente",
+  };
+  const aiOperational = aiConfigured && aiHealth.state === "operational";
+  setService("ai", aiOperational, aiLabels[aiHealth.state] ?? "Requer atenção", aiConfigured && aiHealth.state === "not_tested");
   byId("ai-model").textContent = services.ai?.model || "OpenAI";
+  byId("openai-credit-status").textContent = aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Chave não configurada";
+  byId("openai-credit-detail").textContent = aiConfigured ? aiHealth.message : "Configure uma chave para testar.";
+  byId("test-openai-credit").disabled = !aiConfigured;
 
   const whatsappConnected = services.whatsapp?.state === "open";
   const whatsappReachable = Boolean(services.whatsapp?.reachable);
-  setService("whatsapp", whatsappConnected, whatsappConnected ? "Conectado" : (whatsappReachable ? "Desconectado" : "Indisponível"), whatsappReachable && !whatsappConnected);
-  setBadge("whatsapp-badge", whatsappConnected ? "Conectado" : "Desconectado", whatsappConnected ? "ok" : "neutral");
-  setBadge("integration-wa-state", whatsappConnected ? "Conectado" : "Desconectado", whatsappConnected ? "ok" : "neutral");
+  const webhookHealthy = Boolean(services.whatsapp?.webhook?.healthy);
+  const whatsappOperational = whatsappConnected && webhookHealthy;
+  setService("whatsapp", whatsappOperational, whatsappOperational ? "Operacional" : (whatsappConnected ? "Webhook pendente" : (whatsappReachable ? "Desconectado" : "Indisponível")), whatsappConnected && !webhookHealthy);
+  setBadge("whatsapp-badge", whatsappOperational ? "Operacional" : (whatsappConnected ? "Recebimento pendente" : "Desconectado"), whatsappOperational ? "ok" : (whatsappConnected ? "warning" : "neutral"));
+  setBadge("integration-wa-state", whatsappOperational ? "Operacional" : (whatsappConnected ? "Webhook pendente" : "Desconectado"), whatsappOperational ? "ok" : (whatsappConnected ? "warning" : "neutral"));
+  byId("whatsapp-webhook-status").textContent = services.whatsapp?.webhook?.message ?? "Recebimento ainda não verificado";
+  byId("repair-webhook").hidden = !whatsappConnected || webhookHealthy;
+  byId("whatsapp-disconnected").hidden = whatsappConnected;
 
-  const aiConfigured = Boolean(services.ai?.configured);
-  setBadge("ai-badge", aiConfigured ? "Configurada" : "Pendente", aiConfigured ? "ok" : "warning");
-  setBadge("integration-ai-state", aiConfigured ? "Configurada" : "Pendente", aiConfigured ? "ok" : "warning");
+  const aiBadgeState = aiOperational ? "ok" : (aiHealth.state === "insufficient_quota" || aiHealth.state === "invalid_key" ? "danger" : "warning");
+  setBadge("ai-badge", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Pendente", aiBadgeState);
+  setBadge("integration-ai-state", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Pendente", aiBadgeState);
   byId("remove-api-key").hidden = !aiConfigured;
   byId("connect-whatsapp").disabled = !aiConfigured || whatsappConnected;
   byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : "Gerar QR Code";
@@ -143,6 +164,22 @@ function renderOverview(overview) {
   renderConversations(byId("conversation-list"), conversations.slice(0, 5));
   renderConversations(byId("conversation-list-full"), conversations);
   byId("last-update").textContent = `Atualizado ${formatTime(overview.checkedAt)}`;
+}
+
+async function testOpenAICredit() {
+  const button = byId("test-openai-credit");
+  button.disabled = true;
+  button.textContent = "Testando...";
+  try {
+    const health = await api("/dashboard/openai/test", { method: "POST" });
+    setFeedback(byId("key-feedback"), health.message, health.state === "operational" ? "success" : "error");
+    await refreshOverview();
+  } catch (error) {
+    setFeedback(byId("key-feedback"), error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Testar agora";
+  }
 }
 
 async function saveOpenAIKey(event) {
@@ -200,6 +237,22 @@ async function connectWhatsApp() {
     button.disabled = false;
   } finally {
     button.textContent = "Gerar novo QR Code";
+  }
+}
+
+async function repairWebhook() {
+  const button = byId("repair-webhook");
+  button.disabled = true;
+  button.textContent = "Ativando...";
+  try {
+    const result = await api("/dashboard/whatsapp/webhook", { method: "POST" });
+    setFeedback(byId("whatsapp-feedback"), result.message, result.healthy ? "success" : "error");
+    await refreshOverview();
+  } catch (error) {
+    setFeedback(byId("whatsapp-feedback"), error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Ativar recebimento";
   }
 }
 
