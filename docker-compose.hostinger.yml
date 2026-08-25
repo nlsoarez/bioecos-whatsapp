@@ -79,6 +79,7 @@ services:
       PII_ENCRYPTION_KEY: ${BIOECOS_PII_ENCRYPTION_KEY:?Defina BIOECOS_PII_ENCRYPTION_KEY}
     networks:
       - bioecos_internal
+      - bioecos_edge
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
@@ -89,6 +90,9 @@ services:
 networks:
   bioecos_internal:
     name: bioecos_internal
+  bioecos_edge:
+    external: true
+    name: comunora-edge
 
 volumes:
   bioecos_postgres_data:
