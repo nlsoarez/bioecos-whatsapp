@@ -41,7 +41,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
       database,
       evolution: { ...evolutionState, webhook: webhookState },
       ai: { configured: aiConfigured, provider: env.AI_PROVIDER, model: env.AI_MODEL },
-      automation: { mode: env.AUTOMATION_MODE, aiFallback: aiConfigured },
+      automation: { mode: env.AUTOMATION_MODE, aiFallbackConfigured: aiConfigured },
     });
   });
 
@@ -92,7 +92,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
       services: {
         api: true,
         database,
-        automation: { mode: env.AUTOMATION_MODE, aiFallback: aiConfigured && aiHealth.state !== "insufficient_quota" },
+        automation: { mode: env.AUTOMATION_MODE, aiFallback: aiConfigured && aiHealth.state === "operational" },
         ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL, health: aiHealth },
         whatsapp: { ...evolutionState, webhook: webhookState },
       },
