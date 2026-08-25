@@ -1,0 +1,21 @@
+# Checklist de produção
+
+- [ ] Confirmar versão exata da Evolution API v2 implantada.
+- [ ] Configurar `EVOLUTION_API_URL`, chave e instância.
+- [ ] Conectar e confirmar o número oficial do WhatsApp.
+- [ ] Registrar o webhook para `MESSAGES_UPSERT`.
+- [ ] Configurar OpenAI e executar `npm run db:embed`.
+- [ ] Confirmar modelo disponível, limites e orçamento.
+- [ ] Validar calendário, preços, vagas e promoções vigentes.
+- [ ] Definir responsáveis e horários do handoff.
+- [ ] Definir SLA para conversas em `Aguardando especialista`.
+- [ ] Aprovar política de CPF, consentimento, retenção, exclusão e anonimização.
+- [ ] Manter `INTEGRAL_GIFT_ENABLED=false` até definir conteúdo e critérios.
+- [ ] Colocar API atrás de HTTPS, firewall, rate limit e secret manager.
+- [ ] Substituir chave administrativa estática por autenticação corporativa antes de expor painel à internet.
+- [ ] Configurar backups e teste de restauração do PostgreSQL.
+- [ ] Executar os 12 testes com o número real em ambiente de homologação.
+- [ ] Confirmar que atendente humano pausa a IA e que a reativação é manual.
+- [ ] Testar reenvio do mesmo webhook e falhas temporárias da Evolution.
+- [ ] Revisar logs para garantir ausência de segredos e dados excessivos.
+
