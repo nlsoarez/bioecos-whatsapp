@@ -158,7 +158,7 @@ export class EvolutionService implements MessageSender {
   }
 
   private webhookUrl(): string {
-    const publicUrl = this.env.PUBLIC_API_URL.trim().replace(/\/$/, "");
+    const publicUrl = (this.env.PUBLIC_API_URL || `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/bioecos`).trim().replace(/\/$/, "");
     return publicUrl ? `${publicUrl}/webhooks/evolution` : "";
   }
 }

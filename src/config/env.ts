@@ -49,9 +49,6 @@ const schema = z.object({
   if (env.DASHBOARD_SESSION_SECRET === "change-this-session-secret-32-chars") {
     context.addIssue({ code: "custom", path: ["DASHBOARD_SESSION_SECRET"], message: "DASHBOARD_SESSION_SECRET deve ser alterada em produção" });
   }
-  if (!env.PUBLIC_API_URL) {
-    context.addIssue({ code: "custom", path: ["PUBLIC_API_URL"], message: "PUBLIC_API_URL é obrigatória em produção" });
-  }
 });
 
 export type Env = z.infer<typeof schema>;
