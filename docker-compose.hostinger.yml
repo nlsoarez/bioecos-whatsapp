@@ -20,11 +20,22 @@ services:
       retries: 12
 
   bioecos-api:
-    build:
-      context: https://github.com/nlsoarez/bioecos-whatsapp.git#main
-      dockerfile: Dockerfile
+    image: node:22-alpine
     container_name: bioecos-api
     restart: unless-stopped
+    working_dir: /app/source
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        apk add --no-cache git
+        if [ ! -d /app/source/.git ]; then
+          git clone --depth 1 --branch main https://github.com/nlsoarez/bioecos-whatsapp.git /app/source
+        fi
+        npm ci
+        npm run build
+        npm prune --omit=dev
+        npm run start:docker
     depends_on:
       bioecos-postgres:
         condition: service_healthy

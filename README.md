@@ -104,6 +104,8 @@ Os testes locais não chamam OpenAI nem Evolution. A homologação real ainda ex
 
 O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado `bioecos`, com rede, volume e nomes de contêiner exclusivos. A API usa a porta externa `3100`; as portas `80`, `443` e `8080` dos serviços já instalados não são alteradas.
 
+O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. Por isso, a implantação usa a imagem oficial `node:22-alpine` e faz clone, instalação e build dentro do próprio contêiner isolado, sem GitHub Actions.
+
 As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. `BIOECOS_OPENAI_API_KEY` pode permanecer vazia durante a instalação: nesse estado a rota de saúde retorna `setup_required` e o webhook recusa mensagens com `ai_not_configured`. O responsável pela conta deve inserir a chave antes de conectar o WhatsApp.
 
 ## Limites deliberados
