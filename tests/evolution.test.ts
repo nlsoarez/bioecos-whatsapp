@@ -53,4 +53,22 @@ describe("Evolution webhook v2", () => {
     await expect(evolution.configureWebhook()).resolves.toMatchObject({ healthy: true });
     expect(configuredBody).toMatchObject({ webhook: { headers: { "x-webhook-secret": "webhook-secret" } } });
   });
+
+  it("envia texto no formato aceito pela Evolution v2 instalada", async () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgresql://test:test@localhost/test",
+      EVOLUTION_API_URL: "https://evolution.example.com",
+      EVOLUTION_API_KEY: "evolution-secret",
+      EVOLUTION_INSTANCE_NAME: "bioecos",
+      ADMIN_API_KEY: "admin-secret-key",
+    });
+    let body: Record<string, unknown> | null = null;
+    const request = async (_input: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ key: { id: "sent-1" } }), { status: 201 });
+    };
+    const evolution = new EvolutionService(env, request as typeof fetch);
+    await expect(evolution.sendText("5521971970274", "Olá")).resolves.toMatchObject({ externalMessageId: "sent-1" });
+    expect(body).toEqual({ number: "5521971970274", text: "Olá" });
+  });
 });

@@ -161,7 +161,7 @@ export class PostgresRepository implements BioecosRepository {
 
   async addNote(context: ContactContext, note: string): Promise<void> {
     await this.pool.query(
-      "UPDATE leads SET notes = concat_ws(E'\\n', nullif(notes, ''), $2), updated_at = now() WHERE id = $1",
+      "UPDATE leads SET notes = concat_ws(E'\\n', nullif(notes, ''), $2::text), updated_at = now() WHERE id = $1",
       [context.leadId, note],
     );
     await this.auditForContext(context, "agent", "note.added", { note });
@@ -173,7 +173,7 @@ export class PostgresRepository implements BioecosRepository {
       await client.query("BEGIN");
       await client.query("UPDATE conversations SET automation_paused = true, summary = $2 WHERE id = $1", [context.conversationId, summary]);
       await client.query(
-        `UPDATE leads l SET pipeline_stage_id = ps.id, notes = concat_ws(E'\\n', nullif(l.notes, ''), $2), updated_at = now()
+        `UPDATE leads l SET pipeline_stage_id = ps.id, notes = concat_ws(E'\\n', nullif(l.notes, ''), $2::text), updated_at = now()
          FROM pipeline_stages ps JOIN contacts c ON c.project_id = ps.project_id
          WHERE l.id = $1 AND c.id = l.contact_id AND ps.name = 'Aguardando especialista'`,
         [context.leadId, `Handoff: ${reason}`],

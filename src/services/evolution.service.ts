@@ -45,7 +45,7 @@ export class EvolutionService implements MessageSender {
         const response = await this.request(url, {
           method: "POST",
           headers: { "content-type": "application/json", apikey: this.env.EVOLUTION_API_KEY },
-          body: JSON.stringify({ number: normalizePhone(phone), textMessage: { text } }),
+          body: JSON.stringify({ number: normalizePhone(phone), text }),
           signal: controller.signal,
         });
         const raw = (await response.json().catch(() => ({}))) as Record<string, unknown>;
