@@ -29,3 +29,10 @@ process.on("SIGTERM", () => void close("SIGTERM"));
 process.on("SIGINT", () => void close("SIGINT"));
 
 await app.listen({ host: "0.0.0.0", port: env.PORT });
+
+try {
+  const webhook = await evolution.configureWebhook();
+  app.log.info({ healthy: webhook.healthy }, "Webhook Evolution verificado na inicialização");
+} catch (error) {
+  app.log.error(error, "Não foi possível configurar o webhook Evolution na inicialização");
+}

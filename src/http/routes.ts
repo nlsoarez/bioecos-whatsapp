@@ -32,14 +32,14 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   app.get("/health", async (_request, reply) => {
     let database = false;
     try { database = await repository.health(); } catch { database = false; }
-    const evolutionState = await evolution.health();
+    const [evolutionState, webhookState] = await Promise.all([evolution.health(), evolution.webhookStatus()]);
     const aiSecret = await secrets.status("OPENAI_API_KEY");
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || aiSecret.configured;
     return reply.code(database ? 200 : 503).send({
       status: database ? (aiConfigured ? "ok" : "setup_required") : "degraded",
       backend: true,
       database,
-      evolution: evolutionState,
+      evolution: { ...evolutionState, webhook: webhookState },
       ai: { configured: aiConfigured, provider: env.AI_PROVIDER, model: env.AI_MODEL },
     });
   });
