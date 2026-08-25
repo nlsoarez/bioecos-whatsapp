@@ -35,6 +35,8 @@ WhatsApp
 
 Detalhes em [docs/architecture.md](docs/architecture.md).
 
+O portal técnico estático fica em `docs/` e é publicado pelo GitHub Pages diretamente da branch `main`, sem arquivo de workflow ou Action personalizada.
+
 ## Execução local
 
 Pré-requisitos: Node.js 22+, Docker com Compose e credenciais próprias de OpenAI/Evolution.
@@ -97,6 +99,12 @@ npm run build
 ```
 
 Os testes locais não chamam OpenAI nem Evolution. A homologação real ainda exige credenciais, uma instância Evolution v2 conectada e o número definitivo do WhatsApp.
+
+## Hostinger
+
+O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado `bioecos`, com rede, volume e nomes de contêiner exclusivos. A API usa a porta externa `3100`; as portas `80`, `443` e `8080` dos serviços já instalados não são alteradas.
+
+As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado.
 
 ## Limites deliberados
 

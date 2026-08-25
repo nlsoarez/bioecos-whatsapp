@@ -1,0 +1,76 @@
+name: bioecos
+
+services:
+  bioecos-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: bioecos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bioecos
+      POSTGRES_USER: bioecos
+      POSTGRES_PASSWORD: ${BIOECOS_DB_PASSWORD:?Defina BIOECOS_DB_PASSWORD}
+    volumes:
+      - bioecos_postgres_data:/var/lib/postgresql/data
+    networks:
+      - bioecos_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bioecos -d bioecos"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  bioecos-api:
+    build:
+      context: https://github.com/nlsoarez/bioecos-whatsapp.git#main
+      dockerfile: Dockerfile
+    container_name: bioecos-api
+    restart: unless-stopped
+    depends_on:
+      bioecos-postgres:
+        condition: service_healthy
+    ports:
+      - "3100:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      LOG_LEVEL: info
+      ADMIN_CORS_ORIGINS: ""
+      DATABASE_URL: postgresql://bioecos:${BIOECOS_DB_PASSWORD}@bioecos-postgres:5432/bioecos
+      DATABASE_SSL: "false"
+      BIOECOS_SITE_URL: https://www.bioecoscursos.com.br/
+      INTEGRAL_GIFT_ENABLED: "false"
+      AUTOMATION_TIMEZONE: America/Sao_Paulo
+      AUTOMATION_START_HOUR: 0
+      AUTOMATION_END_HOUR: 24
+      AI_PROVIDER: openai
+      AI_MODEL: gpt-4.1-mini
+      AI_EMBEDDING_MODEL: text-embedding-3-small
+      OPENAI_API_KEY: ${BIOECOS_OPENAI_API_KEY:?Defina BIOECOS_OPENAI_API_KEY}
+      OPENAI_BASE_URL: https://api.openai.com/v1
+      EVOLUTION_API_VERSION: 2
+      EVOLUTION_API_URL: http://host.docker.internal:8080
+      EVOLUTION_API_KEY: ${BIOECOS_EVOLUTION_API_KEY:?Defina BIOECOS_EVOLUTION_API_KEY}
+      EVOLUTION_INSTANCE_NAME: ${BIOECOS_EVOLUTION_INSTANCE_NAME:?Defina BIOECOS_EVOLUTION_INSTANCE_NAME}
+      EVOLUTION_WEBHOOK_SECRET: ${BIOECOS_EVOLUTION_WEBHOOK_SECRET:?Defina BIOECOS_EVOLUTION_WEBHOOK_SECRET}
+      EVOLUTION_REQUEST_TIMEOUT_MS: 10000
+      EVOLUTION_MAX_RETRIES: 3
+      ADMIN_API_KEY: ${BIOECOS_ADMIN_API_KEY:?Defina BIOECOS_ADMIN_API_KEY}
+      PII_ENCRYPTION_KEY: ${BIOECOS_PII_ENCRYPTION_KEY:?Defina BIOECOS_PII_ENCRYPTION_KEY}
+    networks:
+      - bioecos_internal
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+networks:
+  bioecos_internal:
+    name: bioecos_internal
+
+volumes:
+  bioecos_postgres_data:
+    name: bioecos_postgres_data

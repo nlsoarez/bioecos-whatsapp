@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Portal técnico da automação de atendimento da Bioecos Sustentável.">
+  <title>Bioecos — Automação WhatsApp</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#inicio" aria-label="Bioecos — início">
+      <span class="brand-mark" aria-hidden="true">B</span>
+      <span>Bioecos <small>Automação WhatsApp</small></span>
+    </a>
+    <nav aria-label="Navegação principal">
+      <a href="#arquitetura">Arquitetura</a>
+      <a href="#seguranca">Segurança</a>
+      <a href="#implantacao">Implantação</a>
+      <a class="nav-cta" href="https://www.bioecoscursos.com.br/">Site oficial</a>
+    </nav>
+  </header>
+
+  <main id="inicio">
+    <section class="hero">
+      <div class="eyebrow">Atendimento oficial Bioecos</div>
+      <h1>Atendimento estruturado,<br><em>sem respostas inventadas.</em></h1>
+      <p class="lead">Uma operação de WhatsApp com regras determinísticas, conhecimento rastreável, CRM e transferência humana real. A IA ajuda; as políticas continuam no controle.</p>
+      <div class="hero-actions">
+        <a class="button primary" href="#arquitetura">Entender a solução</a>
+        <a class="button secondary" href="architecture.md">Documentação técnica</a>
+      </div>
+      <dl class="metrics" aria-label="Indicadores do projeto">
+        <div><dt>12</dt><dd>cenários de aceite</dd></div>
+        <div><dt>7</dt><dd>etapas no pipeline</dd></div>
+        <div><dt>6</dt><dd>tools validadas</dd></div>
+        <div><dt>0</dt><dd>dependência de n8n</dd></div>
+      </dl>
+    </section>
+
+    <section id="arquitetura" class="section">
+      <div class="section-heading">
+        <span>01 — Arquitetura</span>
+        <h2>Da mensagem ao próximo passo, com controle em cada camada.</h2>
+      </div>
+      <div class="flow" role="list" aria-label="Fluxo da automação">
+        <article role="listitem"><b>01</b><h3>WhatsApp</h3><p>A Evolution API v2 recebe e entrega mensagens sem misturar a lógica de negócio.</p></article>
+        <article role="listitem"><b>02</b><h3>Orquestração</h3><p>Deduplicação, janela de atendimento, pausa e políticas são aplicadas antes da IA.</p></article>
+        <article role="listitem"><b>03</b><h3>Débora + RAG</h3><p>A assistente consulta a base Bioecos no PostgreSQL com busca vetorial e textual.</p></article>
+        <article role="listitem"><b>04</b><h3>CRM + humano</h3><p>Lead, tags, etapa, histórico e handoff permanecem registrados e auditáveis.</p></article>
+      </div>
+    </section>
+
+    <section id="seguranca" class="section split">
+      <div class="section-heading">
+        <span>02 — Segurança operacional</span>
+        <h2>O que não pode depender de uma resposta probabilística.</h2>
+        <p>As decisões críticas ficam no código, não no prompt. Segredos permanecem fora do Git e os dados pessoais sensíveis são cifrados.</p>
+      </div>
+      <ul class="checklist">
+        <li><strong>Anti-duplicidade</strong><span>Eventos repetidos não geram respostas repetidas.</span></li>
+        <li><strong>Pausa efetiva</strong><span>Intervenção humana interrompe a IA imediatamente.</span></li>
+        <li><strong>CPF cifrado</strong><span>AES-256-GCM com chave exclusiva do ambiente.</span></li>
+        <li><strong>Admin protegido</strong><span>Rotas administrativas exigem chave separada.</span></li>
+        <li><strong>Auditoria</strong><span>Mudanças e ferramentas executadas deixam rastros.</span></li>
+      </ul>
+    </section>
+
+    <section id="implantacao" class="section deployment">
+      <div class="section-heading">
+        <span>03 — Implantação isolada</span>
+        <h2>Um projeto novo, sem tocar nos serviços já instalados.</h2>
+      </div>
+      <div class="deployment-grid">
+        <div><span>Docker project</span><strong>bioecos</strong><small>rede e volume exclusivos</small></div>
+        <div><span>API</span><strong>porta 3100</strong><small>sem disputar 80 ou 443</small></div>
+        <div><span>Dados</span><strong>PostgreSQL + pgvector</strong><small>persistência dedicada</small></div>
+        <div><span>Portal</span><strong>GitHub Pages</strong><small>branch main, pasta /docs</small></div>
+      </div>
+      <div class="docs-links">
+        <a href="production-checklist.md">Checklist de produção <span>→</span></a>
+        <a href="gap-analysis.md">Análise de lacunas <span>→</span></a>
+        <a href="architecture.md">Arquitetura completa <span>→</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Bioecos Sustentável</span>
+    <p>Portal técnico público. Credenciais, contatos e dados operacionais nunca são publicados aqui.</p>
+  </footer>
+</body>
+</html>

@@ -15,7 +15,13 @@ export interface AppDependencies {
 
 export async function buildApp(dependencies: AppDependencies) {
   const app = Fastify({ logger: { level: dependencies.env.LOG_LEVEL }, bodyLimit: 1_048_576 });
-  await app.register(cors, { origin: false });
+  const allowedOrigins = dependencies.env.ADMIN_CORS_ORIGINS
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  await app.register(cors, {
+    origin: allowedOrigins.length === 0 ? false : allowedOrigins,
+  });
   await registerRoutes(app, dependencies);
   app.setErrorHandler((error, _request, reply) => {
     const candidate = error as { statusCode?: unknown; message?: unknown };
