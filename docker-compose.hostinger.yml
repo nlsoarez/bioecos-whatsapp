@@ -32,7 +32,7 @@ services:
         if [ ! -d /app/source/.git ]; then
           git clone --depth 1 --branch main https://github.com/nlsoarez/bioecos-whatsapp.git /app/source
         fi
-        npm ci
+        npm ci --include=dev
         npm run build
         npm prune --omit=dev
         npm run start:docker
