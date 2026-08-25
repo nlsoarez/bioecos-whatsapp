@@ -34,7 +34,7 @@ const schema = z.object({
   PII_ENCRYPTION_KEY: z.string().default(""),
 }).superRefine((env, context) => {
   if (env.NODE_ENV !== "production") return;
-  for (const key of ["OPENAI_API_KEY", "EVOLUTION_API_KEY", "EVOLUTION_WEBHOOK_SECRET", "PII_ENCRYPTION_KEY"] as const) {
+  for (const key of ["EVOLUTION_API_KEY", "EVOLUTION_WEBHOOK_SECRET", "PII_ENCRYPTION_KEY"] as const) {
     if (!env[key]) context.addIssue({ code: "custom", path: [key], message: `${key} é obrigatória em produção` });
   }
 });

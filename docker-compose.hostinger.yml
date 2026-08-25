@@ -47,7 +47,7 @@ services:
       AI_PROVIDER: openai
       AI_MODEL: gpt-4.1-mini
       AI_EMBEDDING_MODEL: text-embedding-3-small
-      OPENAI_API_KEY: ${BIOECOS_OPENAI_API_KEY:?Defina BIOECOS_OPENAI_API_KEY}
+      OPENAI_API_KEY: ${BIOECOS_OPENAI_API_KEY:-}
       OPENAI_BASE_URL: https://api.openai.com/v1
       EVOLUTION_API_VERSION: 2
       EVOLUTION_API_URL: http://host.docker.internal:8080

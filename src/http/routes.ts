@@ -28,19 +28,22 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     let database = false;
     try { database = await repository.health(); } catch { database = false; }
     const evolutionState = await evolution.health();
-    const ok = database;
-    return reply.code(ok ? 200 : 503).send({
-      status: ok ? "ok" : "degraded",
+    const aiConfigured = Boolean(env.OPENAI_API_KEY);
+    return reply.code(database ? 200 : 503).send({
+      status: database ? (aiConfigured ? "ok" : "setup_required") : "degraded",
       backend: true,
       database,
       evolution: evolutionState,
-      ai: { configured: Boolean(env.OPENAI_API_KEY), provider: env.AI_PROVIDER, model: env.AI_MODEL },
+      ai: { configured: aiConfigured, provider: env.AI_PROVIDER, model: env.AI_MODEL },
     });
   });
 
   app.post("/webhooks/evolution", async (request, reply) => {
     if (env.EVOLUTION_WEBHOOK_SECRET && request.headers["x-webhook-secret"] !== env.EVOLUTION_WEBHOOK_SECRET) {
       return reply.code(401).send({ error: "Webhook não autorizado" });
+    }
+    if (!env.OPENAI_API_KEY) {
+      return reply.code(503).send({ accepted: false, reason: "ai_not_configured" });
     }
     const inbound = parseEvolutionWebhook(request.body);
     if (!inbound) return reply.code(202).send({ accepted: false, reason: "ignored_event" });
@@ -74,4 +77,3 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     return { ok: true, stage: values.stage };
   });
 }
-
