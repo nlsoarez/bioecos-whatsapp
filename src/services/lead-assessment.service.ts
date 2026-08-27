@@ -22,8 +22,9 @@ const FOLLOWUP_MESSAGE_PATTERN = /retomando nossa conversa|seu interesse continu
 
 export function assessLead(currentMessage: string, recentMessages: ChatMessage[], context: ContactContext): LeadAssessment {
   const inbound = recentMessages.filter((item) => item.direction === "inbound").map((item) => item.content);
-  const transcript = [...inbound, currentMessage].slice(-12).join("\n");
-  const course = COURSE_PATTERNS.find(([pattern]) => pattern.test(transcript))?.[1] ?? context.course;
+  const inboundTurns = [...inbound, currentMessage].slice(-12);
+  const transcript = inboundTurns.join("\n");
+  const course = [...inboundTurns].reverse().map(detectCourse).find((value): value is string => Boolean(value)) ?? context.course;
   const mainQuestions = unique([...inbound, currentMessage]
     .filter((text) => /\?|\b(como|quando|quanto|qual|quais|onde|tem|voc[eê]s|posso|precisa|funciona|dura)\b/i.test(text))
     .map((text) => text.trim())
@@ -65,4 +66,8 @@ export function assessLead(currentMessage: string, recentMessages: ChatMessage[]
 
 function unique(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function detectCourse(message: string): string | null {
+  return COURSE_PATTERNS.find(([pattern]) => pattern.test(message))?.[1] ?? null;
 }

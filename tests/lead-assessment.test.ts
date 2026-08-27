@@ -44,6 +44,15 @@ describe("classificação contextual de leads", () => {
     expect(result.shouldHandoff).toBe(false);
   });
 
+  it("mantém o curso mencionado mais recentemente quando o contato muda de escolha", () => {
+    const context = new InMemoryRepository().context;
+    const result = assessLead("Pensando melhor, quero Florais de Bach", [
+      { direction: "inbound", content: "Eu estava avaliando Fitoterapia", timestamp: new Date() },
+      { direction: "outbound", content: "Posso explicar esse curso.", timestamp: new Date() },
+    ], context);
+    expect(result.course).toBe("Florais de Bach");
+  });
+
   it("reconhece desinteresse explícito", () => {
     const context = new InMemoryRepository().context;
     const result = assessLead("Não tenho interesse, pode encerrar", [], context);
