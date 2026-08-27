@@ -8,9 +8,10 @@ import { createPool } from "./client.js";
 const env = loadEnv();
 const pool = createPool(env);
 const knowledgeSources = await Promise.all([
-  { slug: "sustentavel-perguntas-respostas", title: "Bioecos Sustentável — Perguntas e Respostas", path: "config/knowledge/bioecos-sustentavel-perguntas-respostas.md" },
-  { slug: "automatizacao-atendimento", title: "Automação do Atendimento Bioecos", path: "config/knowledge/automatizacao-atendimento.md" },
-  { slug: "site-oficial-cursos", title: "Conteúdo permanente dos cursos — site oficial Bioecos", path: "config/knowledge/site-oficial-cursos.md" },
+  { slug: "sustentavel-perguntas-respostas", title: "Bioecos Sustentável — Perguntas e Respostas", path: "config/knowledge/bioecos-sustentavel-perguntas-respostas.md", sourceType: "company-official" },
+  { slug: "automatizacao-atendimento", title: "Automação do Atendimento Bioecos", path: "config/knowledge/automatizacao-atendimento.md", sourceType: "company-official" },
+  { slug: "site-oficial-cursos", title: "Conteúdo permanente dos cursos — site oficial Bioecos", path: "config/knowledge/site-oficial-cursos.md", sourceType: "company-official" },
+  { slug: "referencias-tecnicas-cursos", title: "Referências técnicas complementares aos temas dos cursos", path: "config/knowledge/referencias-tecnicas-cursos.md", sourceType: "external-authoritative" },
 ].map(async (source) => ({ ...source, content: await readFile(resolve(source.path), "utf8") })));
 const contentHash = createHash("sha256").update(knowledgeSources.map((source) => source.content).join("\n")).digest("hex");
 
@@ -88,7 +89,7 @@ try {
         await client.query(
           `INSERT INTO knowledge_chunks(document_id, chunk_index, title, content, metadata)
            VALUES ($1, $2, $3, $4, $5)`,
-          [documentId, index, section.title, section.content, JSON.stringify({ source: "official", sourceFile: source.path })],
+          [documentId, index, section.title, section.content, JSON.stringify({ source: source.sourceType, sourceFile: source.path })],
         );
       }
     }
