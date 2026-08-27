@@ -23,7 +23,7 @@ const schema = z.object({
   AUTOMATION_TIMEZONE: z.string().default("America/Sao_Paulo"),
   AUTOMATION_START_HOUR: z.coerce.number().int().min(0).max(23).default(0),
   AUTOMATION_END_HOUR: z.coerce.number().int().min(1).max(24).default(24),
-  AUTOMATION_MODE: z.literal("hybrid").default("hybrid"),
+  AUTOMATION_MODE: z.enum(["ai-first", "hybrid"]).default("ai-first"),
   FOLLOWUP_WORKER_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
   AI_PROVIDER: z.enum(["openai"]).default("openai"),
   AI_MODEL: z.string().min(1).default("gpt-4.1-mini"),
@@ -40,6 +40,7 @@ const schema = z.object({
   EVOLUTION_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(3),
   ADMIN_API_KEY: z.string().min(12),
   PII_ENCRYPTION_KEY: z.string().default(""),
+  DASHBOARD_PUBLIC_URL: z.url().default("https://nlsoarez.github.io/bioecos-whatsapp/"),
 }).superRefine((env, context) => {
   if (env.NODE_ENV !== "production") return;
   for (const key of ["EVOLUTION_API_KEY", "EVOLUTION_WEBHOOK_SECRET", "PII_ENCRYPTION_KEY", "DASHBOARD_PASSWORD", "DASHBOARD_SESSION_SECRET"] as const) {

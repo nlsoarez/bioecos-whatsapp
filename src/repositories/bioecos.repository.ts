@@ -1,5 +1,9 @@
 import type { AllowedTag, PipelineStage } from "../domain/constants.js";
-import type { ChatMessage, ContactContext, InboundMessage, IngestResult, KnowledgeHit, LeadTemperature, MonthlyFollowupCandidate, MonthlyFollowupSettings, QualificationStep } from "../domain/types.js";
+import type {
+  ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
+  IngestResult, KnowledgeHit, LeadAssessment, LeadTemperature, MonthlyFollowupCandidate,
+  MonthlyFollowupSettings, QualificationStep,
+} from "../domain/types.js";
 
 export type ContactUpdate = Partial<{
   name: string;
@@ -28,14 +32,23 @@ export interface BioecosRepository {
   updateContact(context: ContactContext, values: ContactUpdate): Promise<void>;
   setQualificationStep(context: ContactContext, step: QualificationStep | null): Promise<void>;
   markLeadTemperature(context: ContactContext, temperature: LeadTemperature, enableMonthlyFollowup: boolean): Promise<void>;
+  recordLeadAssessment(context: ContactContext, assessment: LeadAssessment): Promise<void>;
+  scheduleFollowups(context: ContactContext): Promise<void>;
+  cancelFollowups(context: ContactContext, reason: string): Promise<void>;
   optOutMonthlyFollowup(context: ContactContext): Promise<void>;
   getMonthlyFollowupSettings(): Promise<MonthlyFollowupSettings>;
   setMonthlyFollowupEnabled(enabled: boolean): Promise<MonthlyFollowupSettings>;
   getDueMonthlyFollowups(limit: number): Promise<MonthlyFollowupCandidate[]>;
-  markMonthlyFollowupSent(candidate: MonthlyFollowupCandidate): Promise<void>;
+  markMonthlyFollowupSent(candidate: MonthlyFollowupCandidate, content: string): Promise<void>;
   markMonthlyFollowupFailed(candidate: MonthlyFollowupCandidate, error: string): Promise<void>;
   addNote(context: ContactContext, note: string): Promise<void>;
   handoff(context: ContactContext, reason: string, summary: string): Promise<void>;
+  createCoordinatorNotification(context: ContactContext, message: string): Promise<string>;
+  getCoordinatorNotification(id: string): Promise<CoordinatorNotificationRecord | null>;
+  markCoordinatorNotification(id: string, status: "sent" | "failed", error?: string): Promise<void>;
+  getFailedCoordinatorNotifications(limit: number): Promise<CoordinatorNotificationRecord[]>;
+  setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string): Promise<void>;
+  getLeads(filter: string): Promise<unknown[]>;
   saveOutbound(conversationId: string, externalMessageId: string, content: string, metadata: unknown): Promise<void>;
   setAutomationPaused(conversationId: string, paused: boolean, actor: string): Promise<void>;
   getDashboard(): Promise<unknown>;

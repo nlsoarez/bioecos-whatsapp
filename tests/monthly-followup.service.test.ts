@@ -17,6 +17,7 @@ describe("acompanhamento mensal", () => {
     repository.monthlyCandidates = [{
       leadId: "lead-1", contactId: "contact-1", conversationId: "conversation-1",
       phone: "5521971970274", name: "Maria", course: "Aromaterapia", attempts: 0,
+      step: 1, sequenceId: "sequence-1",
     }];
     const sender = new FakeSender();
     const result = await new MonthlyFollowupService(repository, sender).runOnce();
@@ -30,6 +31,7 @@ describe("acompanhamento mensal", () => {
     const candidate = {
       leadId: "lead-1", contactId: "contact-1", conversationId: "conversation-1",
       phone: "5521971970274", name: "Maria da Silva", course: "Aromaterapia", attempts: 0,
+      step: 1 as const, sequenceId: "sequence-1",
     };
     repository.monthlyCandidates = [candidate];
     const sender = new FakeSender();

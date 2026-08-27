@@ -1,21 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { DEBORA_SYSTEM_PROMPT } from "../config/bioecos.js";
-import { HUMAN_REQUEST_PATTERN, VARIABLE_INFORMATION_PATTERN } from "../domain/constants.js";
-import type { InboundMessage, KnowledgeHit } from "../domain/types.js";
+import type { ChatMessage, ContactContext, InboundMessage, KnowledgeHit, LeadAssessment } from "../domain/types.js";
 import type { BioecosRepository } from "../repositories/bioecos.repository.js";
 import type { MessageSender } from "./evolution.service.js";
 import type { AgentClient } from "./openai.service.js";
-import { matchHybridRule } from "./hybrid-rules.service.js";
-import { FOLLOWUP_OPT_OUT_PATTERN, handleQualificationReply } from "./qualification.service.js";
+import { assessLead } from "./lead-assessment.service.js";
+import { FOLLOWUP_OPT_OUT_PATTERN } from "./qualification.service.js";
+import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "./coordinator-notification.service.js";
 import { ToolService } from "./tool.service.js";
 
-const HANDOFF_MESSAGE = "Certo. Vou deixar sua conversa com a equipe responsável, que continuará o atendimento por aqui.";
+const HANDOFF_MESSAGE = "Entendi. Registrei o que você precisa e a coordenação da equipe responsável continuará o atendimento por aqui.";
+const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e encerrei os acompanhamentos automáticos.";
+const GREETING_PATTERN = /^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê]|tudo bem)[!?.\s]*$/i;
+const FACTUAL_PATTERN = /\?|curso|servi[cç]o|consultoria|licen[cç]|gest[aã]o|aromaterapia|fitoterapia|plantas|florais|paisagismo|terapeut|valor|pre[cç]o|custa|dura|m[oó]dulo|certificado|metodologia|formato|online|presencial|vaga|pagamento|documento|prazo|ctf|rapp|pgrs/i;
 
 export class ConversationService {
   constructor(
     private readonly repository: BioecosRepository,
     private readonly agent: AgentClient,
     private readonly sender: MessageSender,
+    private readonly notifier: CoordinatorNotifier = new NoopCoordinatorNotifier(),
   ) {}
 
   async handle(message: InboundMessage): Promise<{ status: "duplicate" | "paused" | "responded"; response?: string }> {
@@ -24,70 +28,49 @@ export class ConversationService {
 
     if (FOLLOWUP_OPT_OUT_PATTERN.test(message.content)) {
       await this.repository.optOutMonthlyFollowup(ingestion.context);
-      const response = "Certo. O acompanhamento automático foi cancelado e você não receberá novos lembretes mensais.";
+      const response = "Certo. O acompanhamento automático foi cancelado e você não receberá novos lembretes.";
       await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
       return { status: "responded", response };
     }
 
-    if (ingestion.context.automationPaused) return { status: "paused" };
+    if (ingestion.context.automationPaused || ingestion.context.currentOwner !== "ai") return { status: "paused" };
 
-    if (HUMAN_REQUEST_PATTERN.test(message.content)) {
-      await this.repository.handoff(ingestion.context, "Solicitação direta de atendimento humano", message.content);
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, HANDOFF_MESSAGE);
-      return { status: "responded", response: HANDOFF_MESSAGE };
+    const recentMessages = await this.repository.getRecentMessages(ingestion.context.conversationId, 24);
+    const wasFollowupReply = ingestion.context.followupEnabled;
+    await this.repository.cancelFollowups(ingestion.context, "O contato respondeu; sequência anterior cancelada");
+    const assessment = assessLead(message.content, recentMessages, ingestion.context);
+    await this.repository.recordLeadAssessment(ingestion.context, assessment);
+
+    if (assessment.notInterested) {
+      await this.repository.setConversationWorkflow(
+        ingestion.context.conversationId, "not_interested", "ai", "Contato declarou não ter interesse",
+      );
+      await this.sendAndSave(ingestion.context.conversationId, message.phone, NOT_INTERESTED_MESSAGE);
+      return { status: "responded", response: NOT_INTERESTED_MESSAGE };
     }
 
-    if (ingestion.context.temperature === "hot" && ingestion.context.followupEnabled && /^\s*(sim|quero continuar|tenho interesse)\s*[!.]?\s*$/i.test(message.content)) {
-      const response = "Perfeito. Registrei que você quer continuar e encaminhei a conversa para a equipe concluir seu atendimento.";
-      await this.repository.addTag(ingestion.context, "inscricao");
-      await this.repository.moveCard(ingestion.context, "Inscrição ou proposta", "Lead confirmou interesse após acompanhamento");
-      await this.repository.handoff(ingestion.context, "Lead quente confirmou interesse", message.content);
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
-      return { status: "responded", response };
+    if (assessment.temperature === "warm" && ["Novo contato", "IA atendendo"].includes(ingestion.context.pipelineStage)) {
+      await this.repository.moveCard(ingestion.context, "Interesse identificado", assessment.reason);
+    } else if (assessment.temperature === "cold" && ingestion.context.pipelineStage === "Novo contato") {
+      await this.repository.moveCard(ingestion.context, "IA atendendo", "Atendimento iniciado pela IA");
     }
 
-    const qualification = handleQualificationReply(message.content, ingestion.context);
-    if (qualification) {
-      if (qualification.updates) await this.repository.updateContact(ingestion.context, qualification.updates);
-      await this.repository.setQualificationStep(ingestion.context, qualification.nextStep);
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, qualification.response);
-      return { status: "responded", response: qualification.response };
+    if (assessment.shouldHandoff) {
+      return this.handoffAndRespond(ingestion.context, assessment, recentMessages, message, assessment.handoffReason!);
     }
 
-    const shouldConsult = VARIABLE_INFORMATION_PATTERN.test(message.content) || /\?$/.test(message.content.trim());
-    let knowledge: KnowledgeHit[] = shouldConsult
-      ? await this.repository.searchKnowledge(message.content, null, 4)
-      : [];
-    const rule = matchHybridRule(message.content, ingestion.context);
-    if (rule) {
-      if (rule.updates) await this.repository.updateContact(ingestion.context, rule.updates);
-      if (rule.tag) await this.repository.addTag(ingestion.context, rule.tag);
-      if (rule.stage) await this.repository.moveCard(ingestion.context, rule.stage, rule.stageReason ?? "Regra híbrida aplicada");
-      if (rule.qualificationStep !== undefined) {
-        await this.repository.setQualificationStep(ingestion.context, rule.qualificationStep);
-        if (rule.qualificationStep) {
-          await this.repository.moveCard(ingestion.context, "Dados em coleta", "Coleta estruturada de dados iniciada");
-        }
-      }
-      if (rule.temperature) {
-        await this.repository.markLeadTemperature(ingestion.context, rule.temperature, Boolean(rule.enableMonthlyFollowup));
-      }
-      if (rule.handoffReason) await this.repository.handoff(ingestion.context, rule.handoffReason, message.content);
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, rule.response);
-      return { status: "responded", response: rule.response };
+    let knowledge: KnowledgeHit[] = GREETING_PATTERN.test(message.content)
+      ? []
+      : await this.repository.searchKnowledge(message.content, null, 6);
+    if (!knowledge.length && !GREETING_PATTERN.test(message.content)) {
+      const embedding = await this.agent.embed(message.content).catch(() => null);
+      if (embedding) knowledge = await this.repository.searchKnowledge(message.content, embedding, 6);
     }
 
-    const recentMessages = await this.repository.getRecentMessages(ingestion.context.conversationId, 12);
-    if (shouldConsult) {
-      if (!knowledge.length) {
-        const embedding = await this.agent.embed(message.content).catch(() => null);
-        if (embedding) knowledge = await this.repository.searchKnowledge(message.content, embedding, 4);
-      }
-      if (!knowledge.length && !/^(oi|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê])/i.test(message.content)) {
-        await this.repository.handoff(ingestion.context, "Informação não encontrada na base", message.content);
-        await this.sendAndSave(ingestion.context.conversationId, message.phone, HANDOFF_MESSAGE);
-        return { status: "responded", response: HANDOFF_MESSAGE };
-      }
+    if (!knowledge.length && FACTUAL_PATTERN.test(message.content) && !GREETING_PATTERN.test(message.content)) {
+      return this.handoffAndRespond(
+        ingestion.context, assessment, recentMessages, message, "Informação importante não encontrada nos documentos oficiais",
+      );
     }
 
     const tools = new ToolService(this.repository, this.agent, ingestion.context);
@@ -95,22 +78,56 @@ export class ConversationService {
     try {
       response = await this.agent.respond({
         prompt: DEBORA_SYSTEM_PROMPT,
-        context: ingestion.context,
+        context: { ...ingestion.context, temperature: assessment.temperature, course: assessment.course ?? ingestion.context.course,
+          interest: assessment.interest ?? ingestion.context.interest, mainQuestions: assessment.mainQuestions,
+          objections: assessment.objections },
         recentMessages,
         userMessage: message.content,
         knowledge,
         tools,
       });
     } catch {
-      await this.repository.handoff(ingestion.context, "Fallback de IA indisponível", message.content);
-      response = HANDOFF_MESSAGE;
+      return this.handoffAndRespond(
+        ingestion.context, assessment, recentMessages, message, "IA indisponível; atendimento seguro transferido",
+      );
     }
+
     await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
+    if (!wasFollowupReply && assessment.temperature === "warm" && assessment.course) {
+      await this.repository.scheduleFollowups(ingestion.context);
+    }
     return { status: "responded", response };
+  }
+
+  private async handoffAndRespond(
+    context: ContactContext,
+    assessment: LeadAssessment,
+    recentMessages: ChatMessage[],
+    message: InboundMessage,
+    reason: string,
+  ): Promise<{ status: "responded"; response: string }> {
+    const summary = buildSummary(context, assessment, recentMessages, message.content);
+    if (/or[cç]amento|proposta/i.test(message.content)) await this.repository.addTag(context, "orcamento");
+    if (/matr[ií]cula|inscri[cç][aã]o|me inscrever|quero continuar|^\s*sim\s*$/i.test(message.content)) await this.repository.addTag(context, "inscricao");
+    await this.repository.handoff(context, reason, summary);
+    await this.notifier.notify(context, { assessment, summary, lastMessage: message.content }).catch(() => null);
+    await this.sendAndSave(context.conversationId, message.phone, HANDOFF_MESSAGE);
+    return { status: "responded", response: HANDOFF_MESSAGE };
   }
 
   private async sendAndSave(conversationId: string, phone: string, content: string): Promise<void> {
     const sent = await this.sender.sendText(phone, content);
     await this.repository.saveOutbound(conversationId, sent.externalMessageId || `outbound:${randomUUID()}`, content, sent.raw);
   }
+}
+
+function buildSummary(context: ContactContext, assessment: LeadAssessment, messages: ChatMessage[], current: string): string {
+  const relevant = messages.filter((item) => item.direction === "inbound").map((item) => item.content).slice(-5);
+  const conversation = [...relevant, current].filter((value, index, values) => values.indexOf(value) === index).join(" | ");
+  return [
+    `Lead ${assessment.temperature.toUpperCase()}`,
+    `interesse: ${assessment.course ?? context.course ?? context.interest ?? "em identificação"}`,
+    assessment.objections.length ? `objeções: ${assessment.objections.join(", ")}` : "sem objeção registrada",
+    `contexto recente: ${conversation.slice(0, 900)}`,
+  ].join("; ");
 }

@@ -7,6 +7,7 @@ import { ConversationService } from "./services/conversation.service.js";
 import { EvolutionService } from "./services/evolution.service.js";
 import { OpenAIResponsesClient } from "./services/openai.service.js";
 import { MonthlyFollowupService } from "./services/monthly-followup.service.js";
+import { CoordinatorNotificationService } from "./services/coordinator-notification.service.js";
 
 const env = loadEnv();
 const pool = createPool(env);
@@ -16,9 +17,15 @@ const secrets = new RuntimeSecretStore(env.RUNTIME_SECRETS_PATH, env.PII_ENCRYPT
 const agent = new OpenAIResponsesClient(env, fetch, async () => (
   (await secrets.get("OPENAI_API_KEY")) ?? (env.OPENAI_API_KEY || null)
 ));
-const conversations = new ConversationService(repository, agent, evolution);
+const coordinatorNotifier = new CoordinatorNotificationService(
+  repository,
+  evolution,
+  async () => secrets.get("COORDINATOR_WHATSAPP"),
+  env.DASHBOARD_PUBLIC_URL,
+);
+const conversations = new ConversationService(repository, agent, evolution, coordinatorNotifier);
 const monthlyFollowup = new MonthlyFollowupService(repository, evolution);
-const app = await buildApp({ env, repository, evolution, conversations, openai: agent, secrets });
+const app = await buildApp({ env, repository, evolution, conversations, openai: agent, secrets, coordinatorNotifier });
 
 const runMonthlyFollowup = async () => {
   try {

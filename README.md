@@ -7,12 +7,13 @@ Backend greenfield para o atendimento da Bioecos com WhatsApp, Débora, base de 
 - webhook Evolution API v2 em `POST /webhooks/evolution`;
 - bloqueio de eventos irrelevantes, mensagens próprias, grupos e mensagens duplicadas;
 - envio de texto pela rota Evolution v2 `POST /message/sendText/{instanceName}`;
-- modo híbrido: regras determinísticas e base de conhecimento primeiro, OpenAI apenas como fallback opcional;
+- modo IA-first: a OpenAI conduz a conversa usando exclusivamente os dois documentos oficiais ativos;
 - RAG híbrido: busca semântica com `pgvector` e fallback full-text em português;
 - contatos, leads, conversas, mensagens, tags, pipeline, notas e auditoria;
-- coleta estruturada de nome, e-mail, cidade e objetivo para interessados em cursos;
-- classificação de lead frio, morno e quente sem depender de IA;
-- acompanhamento mensal opcional para leads quentes de cursos, com limite de 3 tentativas, opt-out por `SAIR` e bloqueio após conversão, atendimento humano ou conversa recente;
+- qualificação contextual de lead frio, morno e quente, com histórico de mudanças, dúvidas e objeções;
+- estados explícitos de IA, espera pelo coordenador, coordenador atendendo, conversa finalizada e matrícula concluída;
+- acompanhamento opcional nos dias 15, 30 e 45, com mensagens distintas, opt-out por `SAIR` e cancelamento após resposta, conversão, desinteresse ou atendimento humano;
+- notificação automática ao coordenador, com resumo e link para o atendimento, além de falha visível e reenvio pelo portal;
 - pausa efetiva da IA após handoff ou intervenção humana;
 - seed idempotente de projeto, agente, tags, pipeline e conhecimento;
 - API administrativa mínima para dashboard, contato, pipeline e pausa;
@@ -28,8 +29,8 @@ WhatsApp
   → Evolution API v2
   → POST /webhooks/evolution
   → ConversationService
-      → regras determinísticas e respostas seguras
-      → Débora / OpenAI Responses API (fallback opcional)
+      → classificação contextual e regras de segurança
+      → Débora / OpenAI Responses API (atendimento principal)
       → tools validadas
       → RAG PostgreSQL + pgvector
       → CRM e auditoria
@@ -43,7 +44,7 @@ O portal técnico estático fica em `docs/` e é publicado pelo GitHub Pages dir
 
 ## Execução local
 
-Pré-requisitos: Node.js 22+, Docker com Compose e credenciais da Evolution. A chave OpenAI é opcional no modo híbrido.
+Pré-requisitos: Node.js 22+, Docker com Compose e credenciais da Evolution. A chave OpenAI operacional é necessária para o atendimento automático; sem ela, a conversa é transferida com segurança.
 
 ```bash
 cp .env.example .env
@@ -64,7 +65,7 @@ No Windows/PowerShell, copie o arquivo com `Copy-Item .env.example .env`.
 Não coloque segredos no código ou no Git. Configure no `.env` ou em um gerenciador de segredos:
 
 - `DATABASE_URL`;
-- opcionalmente `OPENAI_API_KEY`, `AI_PROVIDER`, `AI_MODEL` e `AI_EMBEDDING_MODEL` para o fallback por IA;
+- `OPENAI_API_KEY`, inserida no portal e armazenada cifrada; `AI_PROVIDER`, `AI_MODEL` e `AI_EMBEDDING_MODEL` definem o cliente;
 - `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE_NAME`;
 - `ADMIN_API_KEY`;
 - `PII_ENCRYPTION_KEY`, usada para cifrar CPF com AES-256-GCM;
@@ -83,6 +84,11 @@ O site oficial é configurado por `BIOECOS_SITE_URL` e deve permanecer como `htt
 | `PATCH` | `/admin/conversations/:id/pause` | pausa/reativação manual |
 | `PATCH` | `/admin/conversations/:id/pipeline` | movimentação manual do card |
 | `PUT` | `/dashboard/settings/monthly-followup` | ativa ou desativa o acompanhamento mensal |
+| `PUT` | `/dashboard/settings/coordinator-phone` | armazena cifrado o WhatsApp do coordenador |
+| `GET` | `/dashboard/leads?filter=` | lista e filtra leads operacionais |
+| `GET` | `/dashboard/leads/:contactId` | histórico completo do lead |
+| `PATCH` | `/dashboard/conversations/:id/workflow` | assume, devolve, conclui ou encerra conversa |
+| `POST` | `/dashboard/notifications/:id/retry` | reenvia notificação que falhou |
 
 As rotas administrativas exigem o cabeçalho `x-admin-key`.
 As rotas de `/dashboard` exigem a sessão autenticada do portal.
@@ -95,7 +101,7 @@ npm run db:seed
 npm run db:embed
 ```
 
-O seed usa chaves únicas e hash de conteúdo. Executá-lo novamente atualiza configurações sem duplicar projeto, agente, tags, etapas ou documentos. Embeddings só são recalculados para chunks sem vetor.
+O seed usa chaves únicas e hash de conteúdo. Ele mantém o histórico, desativa fontes antigas e deixa ativos somente os dois documentos oficiais em `config/knowledge/`. Embeddings só são recalculados para chunks sem vetor.
 
 ## Testes
 
@@ -112,9 +118,9 @@ O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado 
 
 O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. Por isso, a implantação usa a imagem oficial `node:22-alpine` e faz clone, instalação e build dentro do próprio contêiner isolado, sem GitHub Actions.
 
-As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI é inserida pelo responsável dentro do dashboard e fica cifrada no volume `bioecos_config_data`; não precisa ser cadastrada no Compose. Sem chave ou saldo, regras conhecidas continuam respondendo e mensagens não reconhecidas são encaminhadas para atendimento humano.
+As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI e o número do coordenador são inseridos pelo responsável dentro do dashboard e ficam cifrados no volume `bioecos_config_data`; não precisam ser gravados no Compose. Sem chave ou saldo, a IA não improvisa: a conversa é encaminhada para a coordenação.
 
-O acompanhamento mensal nasce desativado. A ativação é feita conscientemente no portal; habilitar o recurso não envia contatos antigos imediatamente, pois cada lead quente só vence 30 dias depois do sinal de compra.
+O acompanhamento 15/30/45 nasce desativado. A ativação é feita conscientemente no portal; cada sequência só começa depois de um novo interesse elegível registrado pela automação.
 
 ## Limites deliberados
 

@@ -8,6 +8,8 @@ import type { RuntimeSecretStore } from "../security/runtime-secret.store.js";
 import { ConversationService } from "../services/conversation.service.js";
 import { EvolutionService, parseEvolutionWebhook } from "../services/evolution.service.js";
 import { OpenAIResponsesClient } from "../services/openai.service.js";
+import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "../services/coordinator-notification.service.js";
+import type { ConversationWorkflowState } from "../domain/types.js";
 
 interface Dependencies {
   env: Env;
@@ -16,6 +18,7 @@ interface Dependencies {
   conversations: ConversationService;
   openai: OpenAIResponsesClient;
   secrets: RuntimeSecretStore;
+  coordinatorNotifier?: CoordinatorNotifier;
 }
 
 function assertAdmin(request: FastifyRequest, env: Env): void {
@@ -28,6 +31,7 @@ function assertAdmin(request: FastifyRequest, env: Env): void {
 
 export async function registerRoutes(app: FastifyInstance, dependencies: Dependencies): Promise<void> {
   const { env, repository, evolution, conversations, openai, secrets } = dependencies;
+  const coordinatorNotifier = dependencies.coordinatorNotifier ?? new NoopCoordinatorNotifier();
 
   app.get("/health", async (_request, reply) => {
     let database = false;
@@ -78,11 +82,12 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.get("/dashboard/overview", async (request) => {
     requireDashboardSession(request, env);
-    const [database, evolutionState, webhookState, ai, dashboard, followupSettings] = await Promise.all([
+    const [database, evolutionState, webhookState, ai, coordinator, dashboard, followupSettings] = await Promise.all([
       repository.health().catch(() => false),
       evolution.connectionState(),
       evolution.webhookStatus(),
       secrets.status("OPENAI_API_KEY"),
+      secrets.status("COORDINATOR_WHATSAPP"),
       repository.getDashboard(),
       repository.getMonthlyFollowupSettings(),
     ]);
@@ -96,6 +101,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
         automation: { mode: env.AUTOMATION_MODE, aiFallback: aiConfigured && aiHealth.state === "operational" },
         ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL, health: aiHealth },
         whatsapp: { ...evolutionState, webhook: webhookState },
+        coordinator: { configured: coordinator.configured, updatedAt: coordinator.updatedAt },
       },
       metrics: { ...(dashboard as Record<string, unknown>), followupSettings },
       checkedAt: new Date().toISOString(),
@@ -132,6 +138,54 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     requireDashboardSession(request, env);
     const { enabled } = z.object({ enabled: z.boolean() }).parse(request.body);
     return repository.setMonthlyFollowupEnabled(enabled);
+  });
+
+  app.put("/dashboard/settings/coordinator-phone", async (request) => {
+    requireDashboardSession(request, env);
+    const { phone } = z.object({ phone: z.string().min(10).max(30) }).parse(request.body);
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 15) throw httpError(400, "Número do coordenador inválido");
+    await secrets.set("COORDINATOR_WHATSAPP", digits);
+    return { configured: true, updatedAt: new Date().toISOString(), masked: `••••${digits.slice(-4)}` };
+  });
+
+  app.delete("/dashboard/settings/coordinator-phone", async (request) => {
+    requireDashboardSession(request, env);
+    await secrets.delete("COORDINATOR_WHATSAPP");
+    return { configured: false };
+  });
+
+  app.get("/dashboard/leads", async (request) => {
+    requireDashboardSession(request, env);
+    const { filter } = z.object({ filter: z.string().max(50).default("all") }).parse(request.query);
+    return { leads: await repository.getLeads(filter) };
+  });
+
+  app.get<{ Params: { contactId: string } }>("/dashboard/leads/:contactId", async (request, reply) => {
+    requireDashboardSession(request, env);
+    const lead = await repository.getContactView(request.params.contactId);
+    return lead ? { lead } : reply.code(404).send({ error: "Lead não encontrado" });
+  });
+
+  app.patch<{ Params: { conversationId: string } }>("/dashboard/conversations/:conversationId/workflow", async (request) => {
+    requireDashboardSession(request, env);
+    const values = z.object({
+      state: z.enum(["ai_attending", "awaiting_coordinator", "coordinator_attending", "conversation_finished", "enrollment_completed", "not_interested"]),
+      reason: z.string().min(2).max(500),
+    }).parse(request.body);
+    const owner = values.state === "ai_attending" ? "ai" : "coordinator";
+    await repository.setConversationWorkflow(request.params.conversationId, values.state as ConversationWorkflowState, owner, values.reason);
+    return { ok: true, state: values.state, owner };
+  });
+
+  app.get("/dashboard/notifications/failed", async (request) => {
+    requireDashboardSession(request, env);
+    return { notifications: await repository.getFailedCoordinatorNotifications(50) };
+  });
+
+  app.post<{ Params: { id: string } }>("/dashboard/notifications/:id/retry", async (request) => {
+    requireDashboardSession(request, env);
+    return coordinatorNotifier.retry(request.params.id);
   });
 
   app.get("/dashboard/whatsapp", async (request) => {

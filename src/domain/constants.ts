@@ -1,9 +1,14 @@
 export const PIPELINE_STAGES = [
   "Novo contato",
+  "IA atendendo",
   "Interesse identificado",
   "Dados em coleta",
-  "Aguardando especialista",
+  "Aguardando coordenador",
+  "Coordenador atendendo",
   "Inscrição ou proposta",
+  "Matrícula concluída",
+  "Sem interesse",
+  "Conversa finalizada",
   "Convertido",
   "Encerrado",
 ] as const;
@@ -32,6 +37,6 @@ export const VARIABLE_INFORMATION_PATTERN =
   /curso|forma[cç][aã]o|imers[aã]o|aromaterapia|fitoterapia|florais|cosm[eé]tica|plantas medicinais|pre[cç]o|valor|quanto custa|investimento|pr[oó]xima turma|calend[aá]rio|vaga|disponibilidade|desconto|promo[cç][aã]o|prazo|certificado|documentos?|hospedagem|alimenta[cç][aã]o|ctf|rapp|pgrs|pgrss|licen[cç]a/i;
 
 export const HUMAN_REQUEST_PATTERN =
-  /falar com (?:um |uma )?(?:humano|pessoa|atendente|consultor|especialista)|quero (?:um |uma )?(?:consultor|especialista|atendente)|reclama[cç][aã]o|cancelamento|urgente|urg[eê]ncia/i;
+  /falar com (?:um |uma )?(?:humano|pessoa|atendente|consultor|especialista|coordenador)|quero (?:um |uma )?(?:consultor|especialista|atendente|coordenador)|reclama[cç][aã]o|cancelamento|urgente|urg[eê]ncia/i;
 
 export const BUDGET_PATTERN = /or[cç]amento|proposta comercial/i;

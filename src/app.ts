@@ -7,6 +7,7 @@ import type { RuntimeSecretStore } from "./security/runtime-secret.store.js";
 import { ConversationService } from "./services/conversation.service.js";
 import { EvolutionService } from "./services/evolution.service.js";
 import { OpenAIResponsesClient } from "./services/openai.service.js";
+import type { CoordinatorNotifier } from "./services/coordinator-notification.service.js";
 
 export interface AppDependencies {
   env: Env;
@@ -15,6 +16,7 @@ export interface AppDependencies {
   conversations: ConversationService;
   openai: OpenAIResponsesClient;
   secrets: RuntimeSecretStore;
+  coordinatorNotifier?: CoordinatorNotifier;
 }
 
 export async function buildApp(dependencies: AppDependencies) {

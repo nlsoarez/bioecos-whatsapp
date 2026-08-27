@@ -7,8 +7,11 @@ import { createPool } from "./client.js";
 
 const env = loadEnv();
 const pool = createPool(env);
-const knowledge = await readFile(resolve("config/bioecos-knowledge.md"), "utf8");
-const contentHash = createHash("sha256").update(knowledge).digest("hex");
+const knowledgeSources = await Promise.all([
+  { slug: "sustentavel-perguntas-respostas", title: "Bioecos Sustentável — Perguntas e Respostas", path: "config/knowledge/bioecos-sustentavel-perguntas-respostas.md" },
+  { slug: "automatizacao-atendimento", title: "Automação do Atendimento Bioecos", path: "config/knowledge/automatizacao-atendimento.md" },
+].map(async (source) => ({ ...source, content: await readFile(resolve(source.path), "utf8") })));
+const contentHash = createHash("sha256").update(knowledgeSources.map((source) => source.content).join("\n")).digest("hex");
 
 function splitSections(markdown: string): Array<{ title: string; content: string }> {
   return markdown
@@ -30,6 +33,14 @@ try {
     [BIOECOS_PROJECT.slug, BIOECOS_PROJECT.name, BIOECOS_PROJECT.organization],
   );
   const projectId = projectResult.rows[0]!.id;
+
+  await client.query(
+    `UPDATE pipeline_stages SET name = 'Aguardando coordenador'
+     WHERE project_id = $1 AND name = 'Aguardando especialista'
+       AND NOT EXISTS (SELECT 1 FROM pipeline_stages x WHERE x.project_id = $1 AND x.name = 'Aguardando coordenador')`,
+    [projectId],
+  );
+  await client.query("UPDATE pipeline_stages SET position = position + 1000 WHERE project_id = $1", [projectId]);
 
   await client.query(
     `INSERT INTO agents(project_id, slug, name, system_prompt, provider, model)
@@ -55,26 +66,30 @@ try {
     );
   }
 
-  const previousDocument = await client.query<{ id: string; content_hash: string }>(
-    "SELECT id, content_hash FROM knowledge_documents WHERE project_id = $1 AND slug = 'bioecos-base'",
-    [projectId],
-  );
-  const documentResult = await client.query<{ id: string }>(
-    `INSERT INTO knowledge_documents(project_id, slug, title, source, content_hash)
-     VALUES ($1, 'bioecos-base', 'Base de Conhecimento — Bioecos', 'config/bioecos-knowledge.md', $2)
-     ON CONFLICT(project_id, slug) DO UPDATE SET title = excluded.title, source = excluded.source,
-       content_hash = excluded.content_hash, active = true, updated_at = now() RETURNING id`,
-    [projectId, contentHash],
-  );
-  const documentId = documentResult.rows[0]!.id;
-  if (previousDocument.rows[0]?.content_hash !== contentHash) {
-    await client.query("DELETE FROM knowledge_chunks WHERE document_id = $1", [documentId]);
-    for (const [index, section] of splitSections(knowledge).entries()) {
-      await client.query(
-        `INSERT INTO knowledge_chunks(document_id, chunk_index, title, content, metadata)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [documentId, index, section.title, section.content, JSON.stringify({ source: "official" })],
-      );
+  await client.query("UPDATE knowledge_documents SET active = false, updated_at = now() WHERE project_id = $1", [projectId]);
+  for (const source of knowledgeSources) {
+    const sourceHash = createHash("sha256").update(source.content).digest("hex");
+    const previousDocument = await client.query<{ id: string; content_hash: string }>(
+      "SELECT id, content_hash FROM knowledge_documents WHERE project_id = $1 AND slug = $2",
+      [projectId, source.slug],
+    );
+    const documentResult = await client.query<{ id: string }>(
+      `INSERT INTO knowledge_documents(project_id, slug, title, source, content_hash, active)
+       VALUES ($1, $2, $3, $4, $5, true)
+       ON CONFLICT(project_id, slug) DO UPDATE SET title = excluded.title, source = excluded.source,
+         content_hash = excluded.content_hash, active = true, updated_at = now() RETURNING id`,
+      [projectId, source.slug, source.title, source.path, sourceHash],
+    );
+    const documentId = documentResult.rows[0]!.id;
+    if (previousDocument.rows[0]?.content_hash !== sourceHash) {
+      await client.query("DELETE FROM knowledge_chunks WHERE document_id = $1", [documentId]);
+      for (const [index, section] of splitSections(source.content).entries()) {
+        await client.query(
+          `INSERT INTO knowledge_chunks(document_id, chunk_index, title, content, metadata)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [documentId, index, section.title, section.content, JSON.stringify({ source: "official", sourceFile: source.path })],
+        );
+      }
     }
   }
 

@@ -63,7 +63,7 @@ services:
       AUTOMATION_TIMEZONE: America/Sao_Paulo
       AUTOMATION_START_HOUR: 0
       AUTOMATION_END_HOUR: 24
-      AUTOMATION_MODE: hybrid
+      AUTOMATION_MODE: ai-first
       FOLLOWUP_WORKER_INTERVAL_MS: 300000
       AI_PROVIDER: openai
       AI_MODEL: gpt-4.1-mini
@@ -80,6 +80,7 @@ services:
       EVOLUTION_MAX_RETRIES: 3
       ADMIN_API_KEY: ${BIOECOS_ADMIN_API_KEY:?Defina BIOECOS_ADMIN_API_KEY}
       PII_ENCRYPTION_KEY: ${BIOECOS_PII_ENCRYPTION_KEY:?Defina BIOECOS_PII_ENCRYPTION_KEY}
+      DASHBOARD_PUBLIC_URL: https://nlsoarez.github.io/bioecos-whatsapp/
     networks:
       - bioecos_internal
       - bioecos_edge

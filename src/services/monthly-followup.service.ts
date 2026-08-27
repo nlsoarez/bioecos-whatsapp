@@ -30,7 +30,7 @@ export class MonthlyFollowupService {
       for (const candidate of candidates) {
         const firstName = candidate.name?.trim().split(/\s+/)[0];
         const greeting = firstName ? `Olá, ${firstName}!` : "Olá!";
-        const content = `${greeting} Aqui é a Débora da Bioecos. Você ainda tem interesse em ${candidate.course}? Se quiser continuar, responda SIM. Se não quiser mais mensagens, responda SAIR.`;
+        const content = followupMessage(candidate.step, greeting, candidate.course);
         let sent;
         try {
           sent = await this.sender.sendText(candidate.phone, content);
@@ -40,7 +40,7 @@ export class MonthlyFollowupService {
           continue;
         }
         try {
-          await this.repository.markMonthlyFollowupSent(candidate);
+          await this.repository.markMonthlyFollowupSent(candidate, content);
           await this.repository.saveOutbound(
             candidate.conversationId,
             sent.externalMessageId || `followup:${randomUUID()}`,
@@ -58,4 +58,14 @@ export class MonthlyFollowupService {
       this.running = false;
     }
   }
+}
+
+function followupMessage(step: 1 | 2 | 3, greeting: string, course: string): string {
+  if (step === 1) {
+    return `${greeting} Aqui é a Débora da Bioecos. Ficou alguma dúvida sobre ${course} que eu possa esclarecer? Se não quiser novos acompanhamentos, responda SAIR.`;
+  }
+  if (step === 2) {
+    return `${greeting} Retomando nossa conversa sobre ${course}: seu interesse continua ou alguma questão está impedindo você de avançar? Para encerrar os acompanhamentos, responda SAIR.`;
+  }
+  return `${greeting} Este é meu último acompanhamento sobre ${course}. Se ainda fizer sentido para você, responda por aqui e continuamos da última conversa. Se preferir encerrar, responda SAIR.`;
 }

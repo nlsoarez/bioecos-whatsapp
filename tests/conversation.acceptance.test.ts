@@ -14,7 +14,8 @@ class FakeAgent implements AgentClient {
   }) {
     this.calls += 1;
     const text = input.userMessage.toLowerCase();
-    if (text.includes("aromaterapia")) return "O curso de Aromaterapia é online, com aulas gravadas e acesso vitalício pela Hotmart.";
+    if (text.includes("aromaterapia")) return "Aromaterapia consta entre os cursos livres da Bioecos. O documento não informa duração ou metodologia.";
+    if (text.includes("fitoterapia")) return "Fitoterapia consta entre os cursos livres da Bioecos.";
     if (text.includes("próxima turma")) return "A próxima turma precisa ser confirmada pela equipe.";
     if (text.includes("quanto custa")) return "O valor atual precisa ser confirmado pela equipe.";
     if (text.includes("ctf")) return "A Bioecos realiza cadastro, atualização e regularização de CTF junto ao IBAMA.";
@@ -84,12 +85,13 @@ describe("homologação Bioecos", () => {
     expect(result.response).toContain("atividade");
   });
 
-  it("7. pedido de orçamento aplica tag e inicia coleta", async () => {
+  it("7. pedido de orçamento aplica tag e encaminha ao coordenador", async () => {
     const s = setup();
     const result = await s.service.handle(inbound("Quero orçamento."));
     expect(s.repository.context.tags).toContain("orcamento");
-    expect(s.repository.context.pipelineStage).toBe("Dados em coleta");
-    expect(result.response).toContain("nome da empresa");
+    expect(s.repository.context.pipelineStage).toBe("Aguardando coordenador");
+    expect(s.repository.context.workflowState).toBe("awaiting_coordinator");
+    expect(result.response).toContain("coordenação");
   });
 
   it("8. pedido de consultor realiza handoff e pausa IA", async () => {
@@ -132,11 +134,11 @@ describe("homologação Bioecos", () => {
     expect(result.response).toContain("renovação");
   });
 
-  it("13. regra conhecida responde sem chamar a OpenAI", async () => {
+  it("13. assunto conhecido usa IA-first com base oficial", async () => {
     const s = setup();
     const result = await s.service.handle(inbound("Vocês têm curso de fitoterapia?"));
     expect(result.response).toContain("Fitoterapia");
-    expect(s.agent.calls).toBe(0);
+    expect(s.agent.calls).toBe(1);
   });
 
   it("14. mensagem não coberta usa a IA como fallback", async () => {
@@ -155,32 +157,23 @@ describe("homologação Bioecos", () => {
     expect(s.sender.sent).toHaveLength(1);
   });
 
-  it("16. coleta os dados do lead de curso em etapas sem usar IA", async () => {
+  it("16. mantém conversa natural e agenda acompanhamento para interesse morno", async () => {
     const s = setup();
     await s.service.handle(inbound("Vocês têm curso de aromaterapia?"));
     expect(s.repository.context.course).toBe("Aromaterapia");
     expect(s.repository.context.temperature).toBe("warm");
-    expect(s.repository.context.qualificationStep).toBe("name");
-
-    await s.service.handle(inbound("Maria da Silva"));
-    await s.service.handle(inbound("maria@example.com"));
-    await s.service.handle(inbound("Niterói - RJ"));
-    const result = await s.service.handle(inbound("Quero trabalhar com terapias naturais"));
-
-    expect(s.repository.context.name).toBe("Maria da Silva");
-    expect(s.repository.context.email).toBe("maria@example.com");
-    expect(s.repository.context.city).toBe("Niterói");
-    expect(s.repository.context.objective).toContain("terapias naturais");
     expect(s.repository.context.qualificationStep).toBeNull();
-    expect(result.response).toContain("Dados registrados");
-    expect(s.agent.calls).toBe(0);
+    expect(s.repository.context.followupEnabled).toBe(true);
+    expect(s.agent.calls).toBe(1);
   });
 
-  it("17. classifica intenção explícita de matrícula como quente e elegível", async () => {
+  it("17. classifica intenção explícita de matrícula como quente e transfere sem follow-up", async () => {
     const s = setup();
     await s.service.handle(inbound("Quero me inscrever no curso de aromaterapia"));
     expect(s.repository.context.temperature).toBe("hot");
-    expect(s.repository.context.followupEnabled).toBe(true);
+    expect(s.repository.context.followupEnabled).toBe(false);
+    expect(s.repository.context.workflowState).toBe("awaiting_coordinator");
+    expect(s.agent.calls).toBe(0);
   });
 
   it("18. SAIR cancela o acompanhamento mesmo com atendimento pausado", async () => {
@@ -198,9 +191,9 @@ describe("homologação Bioecos", () => {
     s.repository.context.temperature = "hot";
     s.repository.context.followupEnabled = true;
     const result = await s.service.handle(inbound("SIM"));
-    expect(result.response).toContain("continuar");
+    expect(result.response).toContain("coordenação");
     expect(s.repository.context.tags).toContain("inscricao");
-    expect(s.repository.context.pipelineStage).toBe("Aguardando especialista");
+    expect(s.repository.context.pipelineStage).toBe("Aguardando coordenador");
     expect(s.repository.context.automationPaused).toBe(true);
   });
 });

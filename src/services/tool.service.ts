@@ -35,6 +35,9 @@ export class ToolService implements AgentToolExecutor {
       }
       case "mover_card": {
         const values = z.object({ etapa: z.enum(PIPELINE_STAGES), reason: z.string().min(3).max(500) }).parse(call.arguments);
+        if (!["IA atendendo", "Interesse identificado", "Dados em coleta"].includes(values.etapa)) {
+          throw new Error("A IA não pode definir estados de coordenador, fechamento ou resultado");
+        }
         await this.repository.moveCard(this.context, values.etapa, values.reason);
         return values;
       }
@@ -54,14 +57,8 @@ export class ToolService implements AgentToolExecutor {
         await this.repository.addNote(this.context, observacao);
         return { saved: true };
       }
-      case "handoff_humano": {
-        const values = z.object({ motivo: z.string().min(2).max(500), resumo: z.string().min(2).max(2_000) }).parse(call.arguments);
-        await this.repository.handoff(this.context, values.motivo, values.resumo);
-        return { paused: true };
-      }
       default:
         throw new Error(`Tool desconhecida: ${call.name}`);
     }
   }
 }
-

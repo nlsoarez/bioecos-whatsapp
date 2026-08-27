@@ -8,15 +8,16 @@
 - [ ] Confirmar modelo disponível, limites e orçamento.
 - [ ] Validar calendário, preços, vagas e promoções vigentes.
 - [ ] Definir responsáveis e horários do handoff.
-- [ ] Definir SLA para conversas em `Aguardando especialista`.
+- [ ] Configurar no portal o WhatsApp do coordenador e testar alerta e reenvio de falha.
+- [ ] Definir SLA para conversas em `Aguardando coordenador`.
 - [ ] Aprovar política de CPF, consentimento, retenção, exclusão e anonimização.
 - [ ] Manter `INTEGRAL_GIFT_ENABLED=false` até definir conteúdo e critérios.
 - [ ] Colocar API atrás de HTTPS, firewall, rate limit e secret manager.
 - [ ] Substituir chave administrativa estática por autenticação corporativa antes de expor painel à internet.
 - [ ] Configurar backups e teste de restauração do PostgreSQL.
-- [ ] Executar os 12 testes com o número real em ambiente de homologação.
+- [ ] Executar os cenários automatizados e a homologação com número real.
 - [ ] Confirmar que atendente humano pausa a IA e que a reativação é manual.
 - [ ] Homologar a coleta de lead, a classificação quente e o cancelamento por `SAIR`.
-- [ ] Aprovar o texto, a base legal e o limite de 3 contatos antes de ativar o acompanhamento mensal no portal.
+- [ ] Aprovar o texto, a base legal e os contatos nos dias 15, 30 e 45 antes de ativar o acompanhamento no portal.
 - [ ] Testar reenvio do mesmo webhook e falhas temporárias da Evolution.
 - [ ] Revisar logs para garantir ausência de segredos e dados excessivos.

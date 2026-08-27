@@ -20,6 +20,10 @@ byId("test-openai-credit")?.addEventListener("click", testOpenAICredit);
 byId("connect-whatsapp")?.addEventListener("click", connectWhatsApp);
 byId("repair-webhook")?.addEventListener("click", repairWebhook);
 byId("toggle-followup")?.addEventListener("click", toggleMonthlyFollowup);
+byId("coordinator-form")?.addEventListener("submit", saveCoordinatorPhone);
+document.querySelectorAll("#lead-filters button").forEach((button) => {
+  button.addEventListener("click", () => loadLeads(button.dataset.filter));
+});
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => showSection(button.dataset.section));
@@ -111,6 +115,7 @@ async function refreshOverview() {
   try {
     const overview = await api("/dashboard/overview");
     renderOverview(overview);
+    await loadNotificationFailures();
     byId("global-alert").hidden = true;
   } catch (error) {
     const alert = byId("global-alert");
@@ -118,6 +123,35 @@ async function refreshOverview() {
     alert.hidden = false;
   } finally {
     button.classList.remove("loading");
+  }
+}
+
+async function loadNotificationFailures() {
+  const container = byId("notification-failures");
+  try {
+    const result = await api("/dashboard/notifications/failed");
+    const notifications = Array.isArray(result.notifications) ? result.notifications : [];
+    container.replaceChildren();
+    container.hidden = notifications.length === 0;
+    if (!notifications.length) return;
+    const text = document.createElement("span");
+    text.textContent = `${notifications.length} notificação(ões) ao coordenador falharam. `;
+    container.append(text);
+    notifications.slice(0, 5).forEach((notification) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary-action";
+      button.textContent = "Tentar novamente";
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try { await api(`/dashboard/notifications/${encodeURIComponent(notification.id)}/retry`, { method: "POST" }); await loadNotificationFailures(); }
+        catch (error) { window.alert(error.message); }
+        finally { button.disabled = false; }
+      });
+      container.append(button);
+    });
+  } catch {
+    container.hidden = true;
   }
 }
 
@@ -137,7 +171,7 @@ function renderOverview(overview) {
   };
   const aiOperational = aiConfigured && aiHealth.state === "operational";
   setService("ai", aiOperational, aiLabels[aiHealth.state] ?? "Requer atenção", aiConfigured && aiHealth.state === "not_tested");
-  byId("ai-model").textContent = `Modo híbrido · ${services.ai?.model || "OpenAI"}`;
+  byId("ai-model").textContent = `Modo IA-first · ${services.ai?.model || "OpenAI"}`;
   byId("openai-credit-status").textContent = aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Chave não configurada";
   byId("openai-credit-detail").textContent = aiConfigured ? aiHealth.message : "Configure uma chave para testar.";
   byId("test-openai-credit").disabled = !aiConfigured;
@@ -159,6 +193,7 @@ function renderOverview(overview) {
   byId("remove-api-key").hidden = !aiConfigured;
   byId("connect-whatsapp").disabled = whatsappConnected;
   byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : "Gerar QR Code";
+  setBadge("integration-coordinator-state", services.coordinator?.configured ? "Configurado" : "Pendente", services.coordinator?.configured ? "ok" : "warning");
 
   renderPipeline(Array.isArray(metrics.stages) ? metrics.stages : []);
   renderFollowup(metrics.followup ?? {}, metrics.followupSettings ?? {});
@@ -184,16 +219,130 @@ function renderFollowup(metrics, settings) {
 async function toggleMonthlyFollowup() {
   const button = byId("toggle-followup");
   const currentlyEnabled = button.dataset.enabled === "true";
-  if (!currentlyEnabled && !window.confirm("Ao ativar, leads quentes elegíveis poderão receber mensagens automáticas pelo WhatsApp a cada 30 dias, no máximo 3 vezes. Deseja ativar?")) return;
+  if (!currentlyEnabled && !window.confirm("Ao ativar, leads elegíveis poderão receber até três mensagens automáticas nos dias 15, 30 e 45. Deseja ativar?")) return;
   button.disabled = true;
   try {
     await api("/dashboard/settings/monthly-followup", { method: "PUT", body: { enabled: !currentlyEnabled } });
-    setFeedback(byId("followup-feedback"), currentlyEnabled ? "Acompanhamento mensal desativado." : "Acompanhamento mensal ativado.", "success");
+    setFeedback(byId("followup-feedback"), currentlyEnabled ? "Acompanhamento 15/30/45 desativado." : "Acompanhamento 15/30/45 ativado.", "success");
     await refreshOverview();
   } catch (error) {
     setFeedback(byId("followup-feedback"), error.message, "error");
   } finally {
     button.disabled = false;
+  }
+}
+
+async function saveCoordinatorPhone(event) {
+  event.preventDefault();
+  const input = byId("coordinator-phone");
+  const button = event.currentTarget.querySelector("button");
+  button.disabled = true;
+  try {
+    const result = await api("/dashboard/settings/coordinator-phone", { method: "PUT", body: { phone: input.value } });
+    input.value = "";
+    setFeedback(byId("coordinator-feedback"), `Número salvo (${result.masked}).`, "success");
+    await refreshOverview();
+  } catch (error) {
+    setFeedback(byId("coordinator-feedback"), error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadLeads(filter = "all") {
+  document.querySelectorAll("#lead-filters button").forEach((button) => button.classList.toggle("active", button.dataset.filter === filter));
+  const feedback = byId("leads-feedback");
+  const table = byId("leads-table");
+  feedback.hidden = false;
+  feedback.textContent = "Carregando leads...";
+  table.hidden = true;
+  try {
+    const result = await api(`/dashboard/leads?filter=${encodeURIComponent(filter)}`);
+    renderLeads(Array.isArray(result.leads) ? result.leads : []);
+  } catch (error) {
+    feedback.textContent = `Não foi possível carregar os leads: ${error.message}`;
+  }
+}
+
+function renderLeads(leads) {
+  const feedback = byId("leads-feedback");
+  const table = byId("leads-table");
+  table.replaceChildren();
+  if (!leads.length) {
+    feedback.hidden = false;
+    feedback.textContent = "Nenhum lead encontrado neste filtro.";
+    table.hidden = true;
+    return;
+  }
+  feedback.hidden = true;
+  table.hidden = false;
+  const header = document.createElement("div");
+  header.className = "lead-row lead-head";
+  ["Nome", "Curso/serviço", "Classificação", "Estado", "Última interação", "Próximo follow-up", "Responsável", "Entrada"].forEach((label) => {
+    const cell = document.createElement("span"); cell.textContent = label; header.append(cell);
+  });
+  table.append(header);
+  leads.forEach((lead) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `lead-row ${lead.temperature === "hot" || lead.workflow_state === "awaiting_coordinator" ? "priority" : ""}`;
+    row.addEventListener("click", () => loadLeadDetail(lead.contact_id));
+    [lead.name || "Sem nome", lead.course || "Em identificação", temperatureLabel(lead.temperature), workflowLabel(lead.workflow_state),
+      formatDateTime(lead.last_interaction_at), lead.followup_next_at ? formatDateTime(lead.followup_next_at) : "—",
+      lead.current_owner === "ai" ? "IA" : "Coordenador", lead.source || "WhatsApp"].forEach((value) => {
+      const cell = document.createElement("span"); cell.textContent = String(value); row.append(cell);
+    });
+    table.append(row);
+  });
+}
+
+async function loadLeadDetail(contactId) {
+  const detail = byId("lead-detail");
+  detail.hidden = false;
+  detail.replaceChildren(emptyState("Carregando histórico..."));
+  try {
+    const { lead } = await api(`/dashboard/leads/${encodeURIComponent(contactId)}`);
+    renderLeadDetail(lead);
+    detail.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    detail.replaceChildren(emptyState(`Falha ao carregar: ${error.message}`));
+  }
+}
+
+function renderLeadDetail(lead) {
+  const detail = byId("lead-detail");
+  detail.replaceChildren();
+  const heading = document.createElement("div");
+  heading.className = "panel-heading";
+  const title = document.createElement("h2"); title.textContent = lead.name || "Contato sem nome";
+  const badge = document.createElement("span"); badge.className = `badge ${lead.temperature === "hot" ? "danger" : lead.temperature === "warm" ? "warning" : "neutral"}`; badge.textContent = temperatureLabel(lead.temperature);
+  heading.append(title, badge);
+  const meta = document.createElement("p"); meta.className = "panel-description";
+  meta.textContent = `${lead.course || lead.interest || "Interesse em identificação"} · ${workflowLabel(lead.workflow_state)} · responsável: ${lead.current_owner === "ai" ? "IA" : "Coordenador"}`;
+  const summary = document.createElement("p"); summary.className = "lead-summary"; summary.textContent = lead.summary || "Resumo ainda não gerado.";
+  const actions = document.createElement("div"); actions.className = "lead-actions";
+  [["coordinator_attending", "Assumir atendimento"], ["ai_attending", "Devolver para IA"], ["enrollment_completed", "Matrícula concluída"], ["not_interested", "Sem interesse"], ["conversation_finished", "Finalizar conversa"]].forEach(([state, label]) => {
+    const button = document.createElement("button"); button.type = "button"; button.className = state === "enrollment_completed" ? "primary-action" : "secondary-action"; button.textContent = label;
+    button.addEventListener("click", () => changeWorkflow(lead.conversation_id, state, label)); actions.append(button);
+  });
+  const history = document.createElement("div"); history.className = "message-history";
+  (lead.history || []).slice().reverse().forEach((message) => {
+    const item = document.createElement("div"); item.className = `message-item ${message.direction}`;
+    const content = document.createElement("p"); content.textContent = message.content;
+    const time = document.createElement("small"); time.textContent = formatDateTime(message.timestamp);
+    item.append(content, time); history.append(item);
+  });
+  if (!history.children.length) history.append(emptyState("Sem mensagens registradas."));
+  detail.append(heading, meta, summary, actions, history);
+}
+
+async function changeWorkflow(conversationId, state, label) {
+  try {
+    await api(`/dashboard/conversations/${encodeURIComponent(conversationId)}/workflow`, { method: "PATCH", body: { state, reason: `Ação manual no portal: ${label}` } });
+    await loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");
+    byId("lead-detail").hidden = true;
+  } catch (error) {
+    window.alert(error.message);
   }
 }
 
@@ -335,6 +484,7 @@ function renderConversations(container, conversations) {
 function showSection(section) {
   document.querySelectorAll(".dashboard-section").forEach((element) => { element.hidden = element.id !== `section-${section}`; });
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.section === section));
+  if (section === "leads") loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");
 }
 
 function setService(id, ok, label, warning = false) {
@@ -374,6 +524,18 @@ function formatTime(value) {
   if (!value) return "agora";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "agora" : new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date);
+}
+
+function temperatureLabel(value) { return ({ cold: "Frio", warm: "Morno", hot: "Quente" })[value] || "Frio"; }
+function workflowLabel(value) {
+  return ({ ai_attending: "IA atendendo", awaiting_coordinator: "Aguardando coordenador", coordinator_attending: "Coordenador atendendo",
+    conversation_finished: "Conversa finalizada", enrollment_completed: "Matrícula concluída", not_interested: "Sem interesse" })[value] || value || "IA atendendo";
 }
 
 function maskPhone(phone) {

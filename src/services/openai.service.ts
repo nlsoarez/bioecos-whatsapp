@@ -1,5 +1,5 @@
 import type { Env } from "../config/env.js";
-import { ALLOWED_TAGS, PIPELINE_STAGES } from "../domain/constants.js";
+import { ALLOWED_TAGS } from "../domain/constants.js";
 import type { ChatMessage, ContactContext, KnowledgeHit } from "../domain/types.js";
 
 export interface AgentToolCall {
@@ -204,7 +204,7 @@ const TOOL_DEFINITIONS = [
     tag: { type: "string", enum: [...ALLOWED_TAGS] },
   }, ["tag"]),
   tool("mover_card", "Move o lead para uma etapa válida do pipeline.", {
-    etapa: { type: "string", enum: [...PIPELINE_STAGES] }, reason: { type: "string" },
+    etapa: { type: "string", enum: ["IA atendendo", "Interesse identificado", "Dados em coleta"] }, reason: { type: "string" },
   }, ["etapa", "reason"]),
   tool("atualizar_contato", "Registra somente dados informados pelo contato.", {
     name: { type: ["string", "null"] }, email: { type: ["string", "null"] }, city: { type: ["string", "null"] },
@@ -213,9 +213,6 @@ const TOOL_DEFINITIONS = [
     interest: { type: ["string", "null"] }, service: { type: ["string", "null"] }, course: { type: ["string", "null"] },
     objective: { type: ["string", "null"] },
   }, ["name", "email", "city", "state", "cpf", "companyName", "profession", "source", "area", "interest", "service", "course", "objective"]),
-  tool("handoff_humano", "Pausa a IA e encaminha a conversa para a equipe.", {
-    motivo: { type: "string" }, resumo: { type: "string" },
-  }, ["motivo", "resumo"]),
   tool("registrar_observacao", "Registra uma observação útil no lead.", {
     observacao: { type: "string" },
   }, ["observacao"]),
