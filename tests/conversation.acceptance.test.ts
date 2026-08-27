@@ -18,6 +18,7 @@ class FakeAgent implements AgentClient {
     if (text.includes("fitoterapia")) return "Fitoterapia consta entre os cursos livres da Bioecos.";
     if (text.includes("próxima turma")) return "A próxima turma precisa ser confirmada pela equipe.";
     if (text.includes("quanto custa")) return "O valor atual precisa ser confirmado pela equipe.";
+    if (text.includes("quais cursos")) return "A Bioecos oferece cursos livres, imersões, atualização em práticas integrativas e formação de terapeutas holísticos.";
     if (text.includes("ctf")) return "A Bioecos realiza cadastro, atualização e regularização de CTF junto ao IBAMA.";
     if (text.includes("rapp")) return "Sim. A Bioecos elabora e envia o RAPP.";
     if (text.includes("renovar")) return "A Bioecos acompanha a renovação de licenças. Qual é a atividade da empresa?";
@@ -102,12 +103,12 @@ describe("homologação Bioecos", () => {
     expect(s.agent.calls).toBe(0);
   });
 
-  it("9. pergunta sem base não é inventada e gera handoff", async () => {
+  it("9. pergunta sem base não é inventada nem gera handoff", async () => {
     const s = setup(false);
     const result = await s.service.handle(inbound("Vocês oferecem curso de mergulho?"));
-    expect(result.response).toContain("equipe responsável");
-    expect(s.repository.context.automationPaused).toBe(true);
-    expect(s.agent.calls).toBe(0);
+    expect(result.response).toContain("responder diretamente");
+    expect(s.repository.context.automationPaused).toBe(false);
+    expect(s.agent.calls).toBe(1);
   });
 
   it("10. webhook duplicado produz uma única resposta", async () => {
@@ -148,12 +149,12 @@ describe("homologação Bioecos", () => {
     expect(s.agent.calls).toBe(1);
   });
 
-  it("15. falha da IA encaminha para humano em vez de deixar o contato sem resposta", async () => {
+  it("15. falha da IA informa instabilidade sem acionar a coordenação", async () => {
     const s = setup();
     s.agent.respond = async () => { throw new Error("Sem crédito"); };
     const result = await s.service.handle(inbound("Tenho uma dúvida diferente"));
-    expect(result.response).toContain("equipe responsável");
-    expect(s.repository.context.automationPaused).toBe(true);
+    expect(result.response).toContain("instabilidade temporária");
+    expect(s.repository.context.automationPaused).toBe(false);
     expect(s.sender.sent).toHaveLength(1);
   });
 
@@ -167,13 +168,14 @@ describe("homologação Bioecos", () => {
     expect(s.agent.calls).toBe(1);
   });
 
-  it("17. classifica intenção explícita de matrícula como quente e transfere sem follow-up", async () => {
+  it("17. classifica intenção explícita de matrícula como quente e mantém a IA", async () => {
     const s = setup();
     await s.service.handle(inbound("Quero me inscrever no curso de aromaterapia"));
     expect(s.repository.context.temperature).toBe("hot");
     expect(s.repository.context.followupEnabled).toBe(false);
-    expect(s.repository.context.workflowState).toBe("awaiting_coordinator");
-    expect(s.agent.calls).toBe(0);
+    expect(s.repository.context.workflowState).toBe("ai_attending");
+    expect(s.repository.context.automationPaused).toBe(false);
+    expect(s.agent.calls).toBe(1);
   });
 
   it("18. SAIR cancela o acompanhamento mesmo com atendimento pausado", async () => {
@@ -186,14 +188,24 @@ describe("homologação Bioecos", () => {
     expect(s.sender.sent).toHaveLength(1);
   });
 
-  it("19. SIM após acompanhamento encaminha o lead quente para fechamento", async () => {
+  it("19. SIM após acompanhamento retoma a conversa com a IA", async () => {
     const s = setup();
     s.repository.context.temperature = "hot";
     s.repository.context.followupEnabled = true;
     const result = await s.service.handle(inbound("SIM"));
-    expect(result.response).toContain("coordenação");
-    expect(s.repository.context.tags).toContain("inscricao");
-    expect(s.repository.context.pipelineStage).toBe("Aguardando coordenador");
-    expect(s.repository.context.automationPaused).toBe(true);
+    expect(result.response).toContain("responder diretamente");
+    expect(s.repository.context.workflowState).toBe("ai_attending");
+    expect(s.repository.context.automationPaused).toBe(false);
+    expect(s.agent.calls).toBe(1);
+  });
+
+  it("20. pergunta genérica sobre cursos recupera a base e não notifica o coordenador", async () => {
+    const s = setup(false);
+    s.repository.knowledge = [{ id: "k-list", title: "Cursos", content: "Cursos Livres e formações", score: 1 }];
+    const result = await s.service.handle(inbound("Quais cursos vcs tem?"));
+    expect(result.response).toContain("cursos livres");
+    expect(s.repository.searchCalls).toEqual(["curso"]);
+    expect(s.repository.context.automationPaused).toBe(false);
+    expect(s.repository.notifications).toHaveLength(0);
   });
 });

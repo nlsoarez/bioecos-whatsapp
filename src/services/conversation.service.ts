@@ -11,8 +11,9 @@ import { ToolService } from "./tool.service.js";
 
 const HANDOFF_MESSAGE = "Entendi. Registrei o que você precisa e a coordenação da equipe responsável continuará o atendimento por aqui.";
 const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e encerrei os acompanhamentos automáticos.";
+const TEMPORARY_ERROR_MESSAGE = "Estou com uma instabilidade temporária e não consegui concluir essa resposta agora. Por favor, tente novamente em alguns instantes.";
 const GREETING_PATTERN = /^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê]|tudo bem)[!?.\s]*$/i;
-const FACTUAL_PATTERN = /\?|curso|servi[cç]o|consultoria|licen[cç]|gest[aã]o|aromaterapia|fitoterapia|plantas|florais|paisagismo|terapeut|valor|pre[cç]o|custa|dura|m[oó]dulo|certificado|metodologia|formato|online|presencial|vaga|pagamento|documento|prazo|ctf|rapp|pgrs/i;
+const COURSE_OVERVIEW_PATTERN = /(?:quais?|lista|op[cç][oõ]es?|todos?).{0,30}(?:cursos?|forma[cç][oõ]es?)|(?:cursos?|forma[cç][oõ]es?).{0,30}(?:tem|t[eê]m|oferece|dispon[ií]ve)/i;
 
 export class ConversationService {
   constructor(
@@ -59,18 +60,13 @@ export class ConversationService {
       return this.handoffAndRespond(ingestion.context, assessment, recentMessages, message, assessment.handoffReason!);
     }
 
+    const courseOverviewRequested = COURSE_OVERVIEW_PATTERN.test(message.content);
     let knowledge: KnowledgeHit[] = GREETING_PATTERN.test(message.content)
       ? []
-      : await this.repository.searchKnowledge(message.content, null, 6);
+      : await this.repository.searchKnowledge(courseOverviewRequested ? "curso" : message.content, null, courseOverviewRequested ? 12 : 6);
     if (!knowledge.length && !GREETING_PATTERN.test(message.content)) {
       const embedding = await this.agent.embed(message.content).catch(() => null);
       if (embedding) knowledge = await this.repository.searchKnowledge(message.content, embedding, 6);
-    }
-
-    if (!knowledge.length && FACTUAL_PATTERN.test(message.content) && !GREETING_PATTERN.test(message.content)) {
-      return this.handoffAndRespond(
-        ingestion.context, assessment, recentMessages, message, "Informação importante não encontrada nos documentos oficiais",
-      );
     }
 
     const tools = new ToolService(this.repository, this.agent, ingestion.context);
@@ -87,9 +83,8 @@ export class ConversationService {
         tools,
       });
     } catch {
-      return this.handoffAndRespond(
-        ingestion.context, assessment, recentMessages, message, "IA indisponível; atendimento seguro transferido",
-      );
+      await this.sendAndSave(ingestion.context.conversationId, message.phone, TEMPORARY_ERROR_MESSAGE);
+      return { status: "responded", response: TEMPORARY_ERROR_MESSAGE };
     }
 
     await this.sendAndSave(ingestion.context.conversationId, message.phone, response);

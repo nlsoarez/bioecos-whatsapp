@@ -21,6 +21,19 @@ describe("classificação contextual de leads", () => {
     expect(result.objections).toContain("formato/modalidade");
   });
 
+  it("mantém intenção de matrícula com a IA até chegar ao pagamento", () => {
+    const context = new InMemoryRepository().context;
+    const result = assessLead("Quero me inscrever no curso de Aromaterapia", [], context);
+    expect(result).toMatchObject({ temperature: "hot", course: "Aromaterapia", shouldHandoff: false });
+  });
+
+  it("encaminha somente quando o contato entra na etapa financeira", () => {
+    const context = new InMemoryRepository().context;
+    const result = assessLead("Quero pagar por PIX", [], context);
+    expect(result).toMatchObject({ temperature: "hot", shouldHandoff: true });
+    expect(result.handoffReason).toContain("Pagamento");
+  });
+
   it("reconhece desinteresse explícito", () => {
     const context = new InMemoryRepository().context;
     const result = assessLead("Não tenho interesse, pode encerrar", [], context);

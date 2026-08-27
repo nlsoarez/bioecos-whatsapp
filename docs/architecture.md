@@ -24,9 +24,9 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 5. Um pedido `SAIR` cancela o acompanhamento mesmo se a conversa estiver pausada.
 6. Se a conversa pertence ao coordenador ou está pausada, a IA não é chamada.
 7. O contexto recente classifica o lead e registra curso, dúvidas e objeções.
-8. Fechamento claro, pedido humano/coordenador ou informação importante ausente geram handoff com resumo e alerta.
+8. Pagamento, negociação financeira, orçamento/proposta ou pedido humano/coordenador geram handoff com resumo e alerta. Perguntas, interesse e inscrição permanecem com a IA.
 9. Nos demais casos, a Responses API conduz a conversa com os chunks dos dois documentos oficiais.
-10. Se a IA estiver indisponível, o contato recebe uma resposta segura e é encaminhado ao coordenador.
+10. Se a IA estiver indisponível, o contato recebe uma resposta temporária segura sem acionar indevidamente a coordenação.
 11. Tools são validadas por schema; a IA não pode marcar matrícula, resultado ou assumir estados humanos.
 12. A resposta é enviada pela Evolution e persistida.
 
