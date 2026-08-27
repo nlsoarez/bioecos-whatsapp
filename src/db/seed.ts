@@ -11,6 +11,7 @@ const knowledgeSources = await Promise.all([
   { slug: "sustentavel-perguntas-respostas", title: "Bioecos Sustentável — Perguntas e Respostas", path: "config/knowledge/bioecos-sustentavel-perguntas-respostas.md", sourceType: "company-official" },
   { slug: "automatizacao-atendimento", title: "Automação do Atendimento Bioecos", path: "config/knowledge/automatizacao-atendimento.md", sourceType: "company-official" },
   { slug: "site-oficial-cursos", title: "Conteúdo permanente dos cursos — site oficial Bioecos", path: "config/knowledge/site-oficial-cursos.md", sourceType: "company-official" },
+  { slug: "documentos-institucionais-cursos", title: "Conteúdo ampliado dos cursos — documentos institucionais Bioecos", path: "config/knowledge/documentos-institucionais-cursos.md", sourceType: "company-official" },
   { slug: "referencias-tecnicas-cursos", title: "Referências técnicas complementares aos temas dos cursos", path: "config/knowledge/referencias-tecnicas-cursos.md", sourceType: "external-authoritative" },
 ].map(async (source) => ({ ...source, content: await readFile(resolve(source.path), "utf8") })));
 const contentHash = createHash("sha256").update(knowledgeSources.map((source) => source.content).join("\n")).digest("hex");
