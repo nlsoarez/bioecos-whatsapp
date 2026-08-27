@@ -12,25 +12,25 @@ As frentes apresentadas são: Cursos Livres a Distância, Imersão em Paisagismo
 
 Os Cursos Livres citados são: Plantas Medicinais, Fitoterapia, Aromaterapia, Florais de Bach e Cosmética, bem-estar e saúde. O documento também prevê orientação para quem ainda não sabe qual escolher.
 
-O documento não informa módulos, duração, certificado, metodologia, formato detalhado, valores, condições de pagamento, calendário ou vagas desses cursos. Esses dados não podem ser presumidos.
+Este documento de automação não descreve a parte pedagógica. Para conteúdo, formato, metodologia, materiais e certificado, a assistente deve consultar a fonte “Conteúdo permanente dos cursos — site oficial Bioecos”. Valores, condições de pagamento, calendário e vagas não fazem parte da base permanente e devem ser confirmados pela coordenação.
 
 ## Imersão em Paisagismo e Jardinagem
 
 Os objetivos de interesse previstos são: aprender a cuidar do próprio jardim; aprender mais por gostar de plantas; transformar jardinagem em hobby; trabalhar com paisagismo; aperfeiçoar-se como jardineiro; ou receber orientação por ainda não saber.
 
-O documento não informa módulos, duração, certificado, metodologia, local, hospedagem, alimentação, valores, datas ou vagas da imersão.
+Este documento de automação não descreve a parte pedagógica. A fonte do site oficial contém conteúdo, metodologia, materiais, local e certificado da imersão. Hospedagem, alimentação, valores, calendário e vagas devem ser confirmados pela coordenação.
 
 ## Atualização em Práticas Integrativas
 
 Os objetivos previstos são: atualizar conhecimentos; aprender para cuidar da família; atualizar-se como terapeuta; conhecer o mercado por trabalhar na área da saúde; ou receber orientação.
 
-O documento não informa módulos, duração, certificado, metodologia, formato, valores, datas ou vagas.
+Este documento de automação não descreve a parte pedagógica. A fonte do site oficial contém conteúdo e formato dos programas de práticas integrativas. Valores, calendário e vagas devem ser confirmados pela coordenação.
 
 ## Formação de Terapeutas Holísticos
 
 Os motivos de interesse previstos são: tornar-se Terapeuta Holístico; complementar a profissão atual; desenvolvimento pessoal; trabalhar com novas terapias naturais; estar conhecendo a área; ou receber orientação.
 
-O documento não informa módulos, duração, certificado, metodologia, formato, valores, datas ou vagas.
+Este documento de automação não descreve a parte pedagógica. A fonte do site oficial contém conteúdo, formato, metodologia, materiais e certificado da formação. Valores, calendário e vagas devem ser confirmados pela coordenação.
 
 ## Bioecos empresarial — Consultoria Ambiental
 

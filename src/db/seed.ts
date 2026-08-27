@@ -10,6 +10,7 @@ const pool = createPool(env);
 const knowledgeSources = await Promise.all([
   { slug: "sustentavel-perguntas-respostas", title: "Bioecos Sustentável — Perguntas e Respostas", path: "config/knowledge/bioecos-sustentavel-perguntas-respostas.md" },
   { slug: "automatizacao-atendimento", title: "Automação do Atendimento Bioecos", path: "config/knowledge/automatizacao-atendimento.md" },
+  { slug: "site-oficial-cursos", title: "Conteúdo permanente dos cursos — site oficial Bioecos", path: "config/knowledge/site-oficial-cursos.md" },
 ].map(async (source) => ({ ...source, content: await readFile(resolve(source.path), "utf8") })));
 const contentHash = createHash("sha256").update(knowledgeSources.map((source) => source.content).join("\n")).digest("hex");
 

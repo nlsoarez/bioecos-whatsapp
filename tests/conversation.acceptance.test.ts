@@ -231,7 +231,7 @@ describe("homologação Bioecos", () => {
     expect(s.agent.calls).toBe(1);
   });
 
-  it("23. não promete conteúdo ou estrutura ao contato iniciante", async () => {
+  it("23. responde ao contato iniciante com o conteúdo confirmado", async () => {
     const s = setup();
     s.repository.context.course = "Fitoterapia";
     s.repository.context.interest = "Fitoterapia";
@@ -241,13 +241,15 @@ describe("homologação Bioecos", () => {
       timestamp: new Date(),
     });
     const result = await s.service.handle(inbound("Começando agora"));
-    expect(result.response).toContain("não detalham conteúdo, módulos, estrutura, duração ou metodologia");
+    expect(result.response).toContain("tinturas");
+    expect(result.response).toContain("formas farmacêuticas");
+    expect(result.response).toContain("não publica uma grade completa");
     expect(result.response).not.toContain("conceitos fundamentais");
     expect(s.repository.notes).toContain("Experiência informada: iniciante/sem experiência");
     expect(s.agent.calls).toBe(0);
   });
 
-  it("24. bloqueia oferta inventada de detalhes ausentes na base", async () => {
+  it("24. substitui oferta inventada pelo conteúdo oficial disponível", async () => {
     const s = setup();
     s.repository.context.course = "Fitoterapia";
     s.repository.context.interest = "Fitoterapia";
@@ -259,7 +261,8 @@ describe("homologação Bioecos", () => {
     }];
     s.agent.respond = async () => "Posso explicar o conteúdo e a estrutura, incluindo conceitos fundamentais e práticas seguras. Quer saber?";
     const result = await s.service.handle(inbound("Pode me orientar melhor?"));
-    expect(result.response).toContain("não detalham conteúdo, módulos, estrutura, duração ou metodologia");
+    expect(result.response).toContain("Produtos Tradicionais Fitoterápicos");
+    expect(result.response).toContain("não publica uma grade completa");
     expect(result.response).not.toContain("práticas seguras");
     expect(s.repository.context.automationPaused).toBe(false);
   });

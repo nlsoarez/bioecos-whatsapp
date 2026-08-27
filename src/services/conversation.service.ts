@@ -14,7 +14,14 @@ const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e 
 const TEMPORARY_ERROR_MESSAGE = "Estou com uma instabilidade temporária e não consegui concluir essa resposta agora. Por favor, tente novamente em alguns instantes.";
 const GREETING_PATTERN = /^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê]|tudo bem)[!?.\s]*$/i;
 const COURSE_OVERVIEW_PATTERN = /(?:quais?|lista|op[cç][oõ]es?|todos?).{0,30}(?:cursos?|forma[cç][oõ]es?)|(?:cursos?|forma[cç][oõ]es?).{0,30}(?:tem|t[eê]m|oferece|dispon[ií]ve)/i;
-const FREE_COURSES = new Set(["Plantas Medicinais", "Fitoterapia", "Aromaterapia", "Florais de Bach", "Cosmética, bem-estar e saúde"]);
+const COURSE_CONTENT_SUMMARIES: Record<string, string> = {
+  "Plantas Medicinais": "Nos conteúdos publicados pela Bioecos, Plantas Medicinais inclui identificação das plantas, escolha da parte utilizada, colheita e extração de princípios ativos, com preparo por infusão, decocção e tinturas.",
+  Fitoterapia: "Nos conteúdos publicados pela Bioecos, Fitoterapia inclui tinturas, terapêutica da fitoterapia, formas farmacêuticas, uso de tinturas em formulações e produção de Produtos Tradicionais Fitoterápicos.",
+  Aromaterapia: "Nos conteúdos publicados pela Bioecos, Aromaterapia inclui trabalho seguro com óleos essenciais e vegetais, combinação entre esses óleos e aplicação em formulações e produtos demonstrados em aula.",
+  "Florais de Bach": "Nos conteúdos publicados pela Bioecos, Florais de Bach inclui história, famílias dos florais, bioenergia das plantas e formas de uso apresentadas nos programas da escola.",
+  "Cosmética, bem-estar e saúde": "Nos conteúdos publicados pela Bioecos, a parte de cosmética inclui produção de sabonetes, cremes, géis, escalda-pés, repelentes, óleos e cosméticos com plantas e minerais.",
+};
+const FREE_COURSES = new Set(Object.keys(COURSE_CONTENT_SUMMARIES));
 
 export class ConversationService {
   constructor(
@@ -196,14 +203,17 @@ function respondToExperienceLevel(
 function enforceSupportedCourseResponse(response: string, course: string | null, knowledge: KnowledgeHit[]): string {
   if (!course || !FREE_COURSES.has(course)) return response;
   const officialText = knowledge.map((hit) => hit.content).join("\n");
-  const documentsDeclareDetailsMissing = /n[aã]o informa.{0,120}(m[oó]dulos?|dura[cç][aã]o|metodologia)|esses dados n[aã]o podem ser presumidos/i.test(officialText);
-  if (!documentsDeclareDetailsMissing) return response;
   const offersMissingDetails = /(?:posso|gostaria|quer(?:ia)? que eu|vou).{0,100}(?:conte[uú]do|estrutura|m[oó]dulos?|grade|ementa)/i.test(response);
   const inventsCourseContent = /conceitos? fundamentais?|uso correto das plantas|pr[aá]ticas seguras|conte[uú]do program[aá]tico|grade curricular/i.test(response);
-  return offersMissingDetails || inventsCourseContent ? safeCourseBoundaryResponse(course) : response;
+  const hasOfficialCourseContent = /(princ[ií]pios ativos|infus[aã]o|decoc[cç][aã]o|tinturas?|formas farmac[eê]uticas|produtos tradicionais fitoter[aá]picos|[oó]leos essenciais|[oó]leos vegetais|fam[ií]lias dos florais|bioenergia|sabonetes|cremes|g[eé]is)/i.test(officialText);
+  const declaresCompleteSyllabus = /grade completa|m[oó]dulo a m[oó]dulo|ementa completa/i.test(response);
+  return offersMissingDetails || inventsCourseContent || (declaresCompleteSyllabus && !hasOfficialCourseContent)
+    ? safeCourseBoundaryResponse(course)
+    : response;
 }
 
 function safeCourseBoundaryResponse(course: string, acknowledgeBeginner = false): string {
   const prefix = acknowledgeBeginner ? `Entendi: você está começando agora em ${course}. ` : "";
-  return `${prefix}Os documentos disponíveis confirmam que ${course} faz parte dos Cursos Livres a Distância da Bioecos, mas não detalham conteúdo, módulos, estrutura, duração ou metodologia. Posso registrar seu interesse para inscrição ou responder outra dúvida que esteja documentada.`;
+  const summary = COURSE_CONTENT_SUMMARIES[course] ?? `A base oficial confirma a oferta de ${course}.`;
+  return `${prefix}${summary} Esses temas aparecem em programas da Bioecos; o site não publica uma grade completa, módulo a módulo, do EAD individual. Você quer esclarecer o formato disponível ou avançar para a inscrição?`;
 }
