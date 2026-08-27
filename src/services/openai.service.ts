@@ -138,7 +138,7 @@ export class OpenAIResponsesClient implements AgentClient {
       body: JSON.stringify({
         model: this.env.AI_MODEL,
         input: "Responda apenas OK.",
-        max_output_tokens: 8,
+        max_output_tokens: 32,
         store: false,
       }),
     }).catch(() => null);
@@ -184,7 +184,20 @@ function classifyOpenAIError(status: number, result: unknown): OpenAIHealthStatu
     return health("insufficient_quota", "Sem crédito ou limite de gastos atingido");
   }
   if (status === 429) return health("rate_limited", "Limite temporário de requisições atingido");
+  if (status === 400) {
+    const message = safeOpenAIErrorMessage(details.message);
+    return health("unavailable", message ? `Solicitação OpenAI recusada: ${message}` : "Solicitação OpenAI recusada (400)");
+  }
   return health("unavailable", `OpenAI indisponível (${status})`);
+}
+
+function safeOpenAIErrorMessage(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[chave protegida]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
 }
 
 function extractOutputText(output: ResponseOutputItem[]): string {

@@ -23,8 +23,32 @@ describe("diagnóstico de crédito OpenAI", () => {
   });
 
   it("marca a chave como operacional quando uma resposta mínima funciona", async () => {
-    const request = async () => new Response(JSON.stringify({ output_text: "OK" }), { status: 200 });
+    let requestBody: Record<string, unknown> | undefined;
+    const request = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ output_text: "OK" }), { status: 200 });
+    };
     const client = new OpenAIResponsesClient(env, request as typeof fetch, async () => "sk-test");
     await expect(client.testCredit()).resolves.toMatchObject({ state: "operational" });
+    expect(requestBody).toMatchObject({
+      model: "gpt-4.1-mini",
+      input: "Responda apenas OK.",
+      max_output_tokens: 32,
+      store: false,
+    });
+  });
+
+  it("mostra a causa segura de uma requisição recusada sem expor a chave", async () => {
+    const request = async () => new Response(JSON.stringify({
+      error: {
+        type: "invalid_request_error",
+        message: "Invalid max_output_tokens; token sk-proj-sensitive must not leak",
+      },
+    }), { status: 400 });
+    const client = new OpenAIResponsesClient(env, request as typeof fetch, async () => "sk-test");
+    await expect(client.testCredit()).resolves.toMatchObject({
+      state: "unavailable",
+      message: "Solicitação OpenAI recusada: Invalid max_output_tokens; token [chave protegida] must not leak",
+    });
   });
 });
