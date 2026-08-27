@@ -11,7 +11,7 @@ class FakeAgent implements AgentClient {
   async respond(input: {
     prompt: string; context: ContactContext; recentMessages: ChatMessage[]; userMessage: string;
     knowledge: KnowledgeHit[]; tools: AgentToolExecutor;
-  }) {
+  }): Promise<string> {
     this.calls += 1;
     const text = input.userMessage.toLowerCase();
     if (text.includes("aromaterapia")) return "Aromaterapia consta entre os cursos livres da Bioecos. O documento não informa duração ou metodologia.";
@@ -229,5 +229,38 @@ describe("homologação Bioecos", () => {
     expect(result.response).toContain("dúvida específica");
     expect(result.response).not.toContain("experiência");
     expect(s.agent.calls).toBe(1);
+  });
+
+  it("23. não promete conteúdo ou estrutura ao contato iniciante", async () => {
+    const s = setup();
+    s.repository.context.course = "Fitoterapia";
+    s.repository.context.interest = "Fitoterapia";
+    s.repository.recent.push({
+      direction: "outbound",
+      content: "Você já tem experiência na área ou está começando agora?",
+      timestamp: new Date(),
+    });
+    const result = await s.service.handle(inbound("Começando agora"));
+    expect(result.response).toContain("não detalham conteúdo, módulos, estrutura, duração ou metodologia");
+    expect(result.response).not.toContain("conceitos fundamentais");
+    expect(s.repository.notes).toContain("Experiência informada: iniciante/sem experiência");
+    expect(s.agent.calls).toBe(0);
+  });
+
+  it("24. bloqueia oferta inventada de detalhes ausentes na base", async () => {
+    const s = setup();
+    s.repository.context.course = "Fitoterapia";
+    s.repository.context.interest = "Fitoterapia";
+    s.repository.knowledge = [{
+      id: "k-course",
+      title: "Cursos Livres",
+      content: "O documento não informa módulos, duração, metodologia ou formato detalhado. Esses dados não podem ser presumidos.",
+      score: 1,
+    }];
+    s.agent.respond = async () => "Posso explicar o conteúdo e a estrutura, incluindo conceitos fundamentais e práticas seguras. Quer saber?";
+    const result = await s.service.handle(inbound("Pode me orientar melhor?"));
+    expect(result.response).toContain("não detalham conteúdo, módulos, estrutura, duração ou metodologia");
+    expect(result.response).not.toContain("práticas seguras");
+    expect(s.repository.context.automationPaused).toBe(false);
   });
 });

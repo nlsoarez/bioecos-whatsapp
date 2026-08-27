@@ -14,6 +14,7 @@ const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e 
 const TEMPORARY_ERROR_MESSAGE = "Estou com uma instabilidade temporária e não consegui concluir essa resposta agora. Por favor, tente novamente em alguns instantes.";
 const GREETING_PATTERN = /^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê]|tudo bem)[!?.\s]*$/i;
 const COURSE_OVERVIEW_PATTERN = /(?:quais?|lista|op[cç][oõ]es?|todos?).{0,30}(?:cursos?|forma[cç][oõ]es?)|(?:cursos?|forma[cç][oõ]es?).{0,30}(?:tem|t[eê]m|oferece|dispon[ií]ve)/i;
+const FREE_COURSES = new Set(["Plantas Medicinais", "Fitoterapia", "Aromaterapia", "Florais de Bach", "Cosmética, bem-estar e saúde"]);
 
 export class ConversationService {
   constructor(
@@ -61,6 +62,13 @@ export class ConversationService {
     }
 
     const selectedCourse = assessment.course ?? ingestion.context.course;
+    const experienceReply = respondToExperienceLevel(message.content, recentMessages, selectedCourse);
+    if (experienceReply) {
+      await this.repository.addNote(ingestion.context, `Experiência informada: ${experienceReply.level}`);
+      await this.sendAndSave(ingestion.context.conversationId, message.phone, experienceReply.response);
+      return { status: "responded", response: experienceReply.response };
+    }
+
     const ambiguousReply = clarifyAmbiguousAffirmation(message.content, recentMessages, selectedCourse);
     if (ambiguousReply) {
       await this.sendAndSave(ingestion.context.conversationId, message.phone, ambiguousReply);
@@ -84,6 +92,9 @@ export class ConversationService {
       const embedding = await this.agent.embed(message.content).catch(() => null);
       if (embedding) knowledge = await this.repository.searchKnowledge(message.content, embedding, 6);
     }
+    if (!knowledge.length && selectedCourse) {
+      knowledge = await this.repository.searchKnowledge(selectedCourse, null, 6);
+    }
 
     const tools = new ToolService(this.repository, this.agent, ingestion.context);
     let response: string;
@@ -98,6 +109,7 @@ export class ConversationService {
         knowledge,
         tools,
       });
+      response = enforceSupportedCourseResponse(response, selectedCourse, knowledge);
     } catch {
       await this.sendAndSave(ingestion.context.conversationId, message.phone, TEMPORARY_ERROR_MESSAGE);
       return { status: "responded", response: TEMPORARY_ERROR_MESSAGE };
@@ -164,4 +176,34 @@ function inferCourseObjective(message: string, course: string | null, existingOb
   if (/\b(complementar|aperfei[cç]oar|atualizar|especializar)\b/i.test(value)) return value;
   if (/\b(uso pessoal|para mim|fam[ií]lia|cuidar da fam[ií]lia|conhecimento|aprender)\b/i.test(value)) return value;
   return null;
+}
+
+function respondToExperienceLevel(
+  message: string,
+  recentMessages: ChatMessage[],
+  course: string | null,
+): { level: string; response: string } | null {
+  if (!course) return null;
+  const lastOutbound = [...recentMessages].reverse().find((item) => item.direction === "outbound")?.content ?? "";
+  if (!/experi[eê]ncia|come[cç]ando agora|come[cç]ando do zero|j[aá] atua/i.test(lastOutbound)) return null;
+  let level: string | null = null;
+  if (/come[cç]ando agora|come[cç]ando do zero|do zero|sem experi[eê]ncia|iniciante/i.test(message)) level = "iniciante/sem experiência";
+  if (/j[aá] (?:tenho|trabalho|atuo)|tenho experi[eê]ncia|sou profissional/i.test(message)) level = "já possui experiência";
+  if (!level) return null;
+  return { level, response: safeCourseBoundaryResponse(course, level === "iniciante/sem experiência") };
+}
+
+function enforceSupportedCourseResponse(response: string, course: string | null, knowledge: KnowledgeHit[]): string {
+  if (!course || !FREE_COURSES.has(course)) return response;
+  const officialText = knowledge.map((hit) => hit.content).join("\n");
+  const documentsDeclareDetailsMissing = /n[aã]o informa.{0,120}(m[oó]dulos?|dura[cç][aã]o|metodologia)|esses dados n[aã]o podem ser presumidos/i.test(officialText);
+  if (!documentsDeclareDetailsMissing) return response;
+  const offersMissingDetails = /(?:posso|gostaria|quer(?:ia)? que eu|vou).{0,100}(?:conte[uú]do|estrutura|m[oó]dulos?|grade|ementa)/i.test(response);
+  const inventsCourseContent = /conceitos? fundamentais?|uso correto das plantas|pr[aá]ticas seguras|conte[uú]do program[aá]tico|grade curricular/i.test(response);
+  return offersMissingDetails || inventsCourseContent ? safeCourseBoundaryResponse(course) : response;
+}
+
+function safeCourseBoundaryResponse(course: string, acknowledgeBeginner = false): string {
+  const prefix = acknowledgeBeginner ? `Entendi: você está começando agora em ${course}. ` : "";
+  return `${prefix}Os documentos disponíveis confirmam que ${course} faz parte dos Cursos Livres a Distância da Bioecos, mas não detalham conteúdo, módulos, estrutura, duração ou metodologia. Posso registrar seu interesse para inscrição ou responder outra dúvida que esteja documentada.`;
 }
