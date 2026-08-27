@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "../src/config/env.js";
 import { OpenAIResponsesClient } from "../src/services/openai.service.js";
+import { InMemoryRepository } from "./support/in-memory.repository.js";
 
 const env = loadEnv({
   DATABASE_URL: "postgresql://test:test@localhost/test",
@@ -50,5 +51,32 @@ describe("diagnóstico de crédito OpenAI", () => {
       state: "unavailable",
       message: "Solicitação OpenAI recusada: Invalid max_output_tokens; token [chave protegida] must not leak",
     });
+  });
+});
+
+describe("continuidade da conversa OpenAI", () => {
+  it("não duplica a mensagem atual dentro do histórico estruturado", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const request = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ output_text: "Resposta coerente" }), { status: 200 });
+    };
+    const client = new OpenAIResponsesClient(env, request as typeof fetch, async () => "sk-test");
+    await client.respond({
+      prompt: "Responda com contexto.",
+      context: new InMemoryRepository().context,
+      recentMessages: [
+        { direction: "outbound", content: "Qual é o objetivo?", timestamp: new Date("2026-08-27T12:00:00Z") },
+        { direction: "inbound", content: "Trabalhar com isso", timestamp: new Date("2026-08-27T12:01:00Z") },
+      ],
+      userMessage: "Trabalhar com isso",
+      knowledge: [],
+      tools: { execute: async () => ({ ok: true }) },
+    });
+    const input = requestBody?.input as Array<{ content?: Array<{ text?: string }> }>;
+    const structured = input[0]?.content?.[0]?.text ?? "";
+    expect(structured.match(/Trabalhar com isso/g)).toHaveLength(1);
+    expect(structured).toContain("Qual é o objetivo?");
+    expect(requestBody?.temperature).toBe(0.2);
   });
 });

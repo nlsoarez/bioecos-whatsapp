@@ -60,6 +60,22 @@ export class ConversationService {
       return this.handoffAndRespond(ingestion.context, assessment, recentMessages, message, assessment.handoffReason!);
     }
 
+    const selectedCourse = assessment.course ?? ingestion.context.course;
+    const ambiguousReply = clarifyAmbiguousAffirmation(message.content, recentMessages, selectedCourse);
+    if (ambiguousReply) {
+      await this.sendAndSave(ingestion.context.conversationId, message.phone, ambiguousReply);
+      return { status: "responded", response: ambiguousReply };
+    }
+
+    const objective = inferCourseObjective(message.content, selectedCourse, ingestion.context.objective);
+    if (objective && selectedCourse) {
+      await this.repository.updateContact(ingestion.context, { objective });
+      const response = `Entendi: seu objetivo com ${selectedCourse} é ${objective}. Registrei essa informação. Você quer esclarecer alguma dúvida específica sobre o curso ou deseja avançar para a inscrição?`;
+      await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
+      if (!wasFollowupReply && assessment.temperature === "warm") await this.repository.scheduleFollowups(ingestion.context);
+      return { status: "responded", response };
+    }
+
     const courseOverviewRequested = COURSE_OVERVIEW_PATTERN.test(message.content);
     let knowledge: KnowledgeHit[] = GREETING_PATTERN.test(message.content)
       ? []
@@ -125,4 +141,27 @@ function buildSummary(context: ContactContext, assessment: LeadAssessment, messa
     assessment.objections.length ? `objeções: ${assessment.objections.join(", ")}` : "sem objeção registrada",
     `contexto recente: ${conversation.slice(0, 900)}`,
   ].join("; ");
+}
+
+function clarifyAmbiguousAffirmation(message: string, recentMessages: ChatMessage[], course: string | null): string | null {
+  if (!/^\s*(sim|isso|sim,? por favor)\s*[!.]?\s*$/i.test(message)) return null;
+  const lastOutbound = [...recentMessages].reverse().find((item) => item.direction === "outbound")?.content ?? "";
+  if (!/[?？]\s*$/.test(lastOutbound.trim())) return null;
+  if (/qual .{0,40}(objetivo|interesse)|o que (?:voc[eê] )?(?:pretende|busca)|para que/i.test(lastOutbound)) {
+    return `Você escolheu ${course ?? "esse curso"}. Para eu orientar corretamente, preciso que me diga seu objetivo — por exemplo: trabalhar na área, complementar sua profissão ou aprender para uso pessoal.`;
+  }
+  if (/qual (?:curso|forma[cç][aã]o)|qual .{0,20}interessa/i.test(lastOutbound)) {
+    return "Para continuar, escreva o nome do curso que você escolheu.";
+  }
+  return "Para eu continuar sem interpretar errado, responda com um pouco mais de detalhe sobre o que você deseja.";
+}
+
+function inferCourseObjective(message: string, course: string | null, existingObjective: string | null): string | null {
+  if (!course || existingObjective || /[?？]/.test(message)) return null;
+  const value = message.trim().replace(/[.!]+$/, "");
+  if (value.length < 3 || value.length > 240) return null;
+  if (/\b(trabalhar|atuar|profiss[aã]o|profissional|carreira|renda)\b/i.test(value)) return "trabalhar na área";
+  if (/\b(complementar|aperfei[cç]oar|atualizar|especializar)\b/i.test(value)) return value;
+  if (/\b(uso pessoal|para mim|fam[ií]lia|cuidar da fam[ií]lia|conhecimento|aprender)\b/i.test(value)) return value;
+  return null;
 }

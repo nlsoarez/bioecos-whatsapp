@@ -123,7 +123,10 @@ export class InMemoryRepository implements BioecosRepository {
     if (state === "not_interested") this.context.enrollmentStatus = "not_interested";
   }
   async getLeads() { return [this.context]; }
-  async saveOutbound(_conversationId: string, _externalMessageId: string, content: string) { this.outbound.push(content); }
+  async saveOutbound(_conversationId: string, _externalMessageId: string, content: string) {
+    this.outbound.push(content);
+    this.recent.push({ direction: "outbound", content, timestamp: new Date() });
+  }
   async setAutomationPaused(_conversationId: string, paused: boolean) { this.context.automationPaused = paused; }
   async getDashboard() { return { stages: [], recentConversations: [], followup: { hot_leads: 0, eligible_leads: 0, opt_outs: 0, sent_last_30_days: 0 } }; }
   async getContactView() { return this.context; }

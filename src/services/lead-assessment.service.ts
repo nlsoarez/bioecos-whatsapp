@@ -18,6 +18,7 @@ const ENROLLMENT_INTENT_PATTERN = /\b(quero (?:me )?(?:matricular|inscrever)|com
 const PAYMENT_OR_COMMERCIAL_PATTERN = /\b(quero fechar|quero (?:um )?or[cç]amento|quero (?:uma )?proposta|como (?:fa[cç]o|fazer) para pagar|onde (?:eu )?pago|quero pagar|pix|boleto|cart[aã]o|link de pagamento|parcelar|parcelamento|negociar|negocia[cç][aã]o|condi[cç][aã]o de pagamento|desconto)\b/i;
 const HUMAN_PATTERN = /\b(falar com (?:um |uma |a |o )?(?:humano|pessoa|atendente|coordenador|consultor|especialista)|atendimento humano)\b/i;
 const NOT_INTERESTED_PATTERN = /\b(n[aã]o tenho interesse|n[aã]o quero|desisti|pode encerrar|pare de mandar|n[aã]o me chame|remova meu contato)\b/i;
+const FOLLOWUP_MESSAGE_PATTERN = /retomando nossa conversa|seu interesse continua|alguma quest[aã]o est[aá] impedindo/i;
 
 export function assessLead(currentMessage: string, recentMessages: ChatMessage[], context: ContactContext): LeadAssessment {
   const inbound = recentMessages.filter((item) => item.direction === "inbound").map((item) => item.content);
@@ -36,7 +37,9 @@ export function assessLead(currentMessage: string, recentMessages: ChatMessage[]
   ].filter(Boolean));
   const notInterested = NOT_INTERESTED_PATTERN.test(currentMessage);
   const humanRequested = HUMAN_PATTERN.test(currentMessage);
-  const followupConfirmation = context.followupEnabled && /^\s*(sim|quero continuar|tenho interesse)\s*[!.]?\s*$/i.test(currentMessage);
+  const lastOutbound = [...recentMessages].reverse().find((item) => item.direction === "outbound")?.content ?? "";
+  const followupConfirmation = context.followupEnabled && FOLLOWUP_MESSAGE_PATTERN.test(lastOutbound)
+    && /^\s*(sim|quero continuar|tenho interesse)\s*[!.]?\s*$/i.test(currentMessage);
   const enrollmentIntent = ENROLLMENT_INTENT_PATTERN.test(transcript) || followupConfirmation;
   const paymentOrCommercialIntent = PAYMENT_OR_COMMERCIAL_PATTERN.test(currentMessage);
   const shouldHandoff = !notInterested && (humanRequested || paymentOrCommercialIntent);

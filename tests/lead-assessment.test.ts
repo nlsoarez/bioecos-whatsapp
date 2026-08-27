@@ -34,6 +34,16 @@ describe("classificação contextual de leads", () => {
     expect(result.handoffReason).toContain("Pagamento");
   });
 
+  it("não trata SIM de conversa normal como resposta de follow-up", () => {
+    const context = new InMemoryRepository().context;
+    context.followupEnabled = true;
+    const result = assessLead("sim", [
+      { direction: "outbound", content: "Qual é o seu objetivo com o curso?", timestamp: new Date() },
+    ], context);
+    expect(result.temperature).toBe("cold");
+    expect(result.shouldHandoff).toBe(false);
+  });
+
   it("reconhece desinteresse explícito", () => {
     const context = new InMemoryRepository().context;
     const result = assessLead("Não tenho interesse, pode encerrar", [], context);

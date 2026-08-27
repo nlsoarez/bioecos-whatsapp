@@ -15,7 +15,7 @@ class FakeAgent implements AgentClient {
     this.calls += 1;
     const text = input.userMessage.toLowerCase();
     if (text.includes("aromaterapia")) return "Aromaterapia consta entre os cursos livres da Bioecos. O documento não informa duração ou metodologia.";
-    if (text.includes("fitoterapia")) return "Fitoterapia consta entre os cursos livres da Bioecos.";
+    if (text.includes("fitoterapia")) return "Fitoterapia consta entre os cursos livres da Bioecos. Qual é o seu objetivo com o curso?";
     if (text.includes("próxima turma")) return "A próxima turma precisa ser confirmada pela equipe.";
     if (text.includes("quanto custa")) return "O valor atual precisa ser confirmado pela equipe.";
     if (text.includes("quais cursos")) return "A Bioecos oferece cursos livres, imersões, atualização em práticas integrativas e formação de terapeutas holísticos.";
@@ -207,5 +207,27 @@ describe("homologação Bioecos", () => {
     expect(s.repository.searchCalls).toEqual(["curso"]);
     expect(s.repository.context.automationPaused).toBe(false);
     expect(s.repository.notifications).toHaveLength(0);
+  });
+
+  it("21. não interpreta SIM como objetivo nem perde o curso selecionado", async () => {
+    const s = setup();
+    await s.service.handle(inbound("Quero Fitoterapia"));
+    const result = await s.service.handle(inbound("sim"));
+    expect(result.response).toContain("Você escolheu Fitoterapia");
+    expect(result.response).toContain("trabalhar na área");
+    expect(s.agent.calls).toBe(1);
+    expect(s.repository.context.course).toBe("Fitoterapia");
+    expect(s.repository.context.temperature).toBe("warm");
+  });
+
+  it("22. registra o objetivo e encerra a investigação repetitiva", async () => {
+    const s = setup();
+    await s.service.handle(inbound("Quero Fitoterapia"));
+    const result = await s.service.handle(inbound("trabalhar com isso"));
+    expect(s.repository.context.objective).toBe("trabalhar na área");
+    expect(result.response).toContain("seu objetivo com Fitoterapia é trabalhar na área");
+    expect(result.response).toContain("dúvida específica");
+    expect(result.response).not.toContain("experiência");
+    expect(s.agent.calls).toBe(1);
   });
 });

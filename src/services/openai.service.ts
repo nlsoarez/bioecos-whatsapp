@@ -65,9 +65,16 @@ export class OpenAIResponsesClient implements AgentClient {
   }): Promise<string> {
     const apiKey = await this.apiKeyProvider();
     if (!apiKey) throw new Error("OPENAI_API_KEY não configurada");
+    const history = withoutDuplicatedCurrentMessage(input.recentMessages, input.userMessage);
+    const lastAssistantMessage = [...history].reverse().find((message) => message.direction === "outbound")?.content ?? null;
     const contextText = JSON.stringify({
       contact: input.context,
-      recentMessages: input.recentMessages.map((message) => ({
+      conversationState: {
+        selectedCourse: input.context.course,
+        objective: input.context.objective,
+        lastAssistantMessage,
+      },
+      recentMessages: history.map((message) => ({
         direction: message.direction,
         content: message.content,
         timestamp: message.timestamp.toISOString(),
@@ -90,6 +97,7 @@ export class OpenAIResponsesClient implements AgentClient {
         store: false,
         include: ["reasoning.encrypted_content"],
         max_output_tokens: 600,
+        temperature: 0.2,
       }, apiKey)) as OpenAIResponse;
       const output = response.output ?? [];
       const calls = output.filter((item) => item.type === "function_call");
@@ -207,6 +215,13 @@ function extractOutputText(output: ResponseOutputItem[]): string {
     .filter((part) => part.type === "output_text" && typeof part.text === "string")
     .map((part) => String(part.text))
     .join("\n");
+}
+
+function withoutDuplicatedCurrentMessage(messages: ChatMessage[], currentMessage: string): ChatMessage[] {
+  const history = [...messages];
+  const last = history.at(-1);
+  if (last?.direction === "inbound" && last.content.trim() === currentMessage.trim()) history.pop();
+  return history;
 }
 
 const TOOL_DEFINITIONS = [
