@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Painel de monitoramento da automação WhatsApp Bioecos.">
   <meta name="theme-color" content="#0b211a">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://evolution.179-198-124-8.sslip.io; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests">
   <title>Bioecos — Painel da Automação</title>
   <link rel="stylesheet" href="assets/styles.css">
 </head>
@@ -81,7 +83,7 @@
         <div id="notification-failures" class="global-alert" hidden></div>
         <div class="status-grid" aria-label="Estado dos serviços">
           <article class="status-card"><div class="status-card-head"><span>API</span><i id="api-dot"></i></div><strong id="api-status">Verificando</strong><small>Backend da automação</small></article>
-          <article class="status-card"><div class="status-card-head"><span>IA — atendimento</span><i id="ai-dot"></i></div><strong id="ai-status">Verificando</strong><small id="ai-model">Modo IA-first</small></article>
+          <article class="status-card"><div class="status-card-head"><span>IA — atendimento</span><i id="ai-dot"></i></div><strong id="ai-status">Verificando</strong><small id="ai-model">Somente IA</small></article>
           <article class="status-card"><div class="status-card-head"><span>WhatsApp</span><i id="whatsapp-dot"></i></div><strong id="whatsapp-status">Verificando</strong><small>Evolution API</small></article>
           <article class="status-card"><div class="status-card-head"><span>Banco</span><i id="database-dot"></i></div><strong id="database-status">Verificando</strong><small>PostgreSQL + pgvector</small></article>
         </div>
@@ -89,7 +91,7 @@
         <div class="content-grid">
           <article class="panel setup-panel">
             <div class="panel-heading"><div><span class="panel-kicker">Configuração essencial</span><h2>Inteligência artificial</h2></div><span id="ai-badge" class="badge warning">Pendente</span></div>
-            <p class="panel-description"><span id="automation-mode-badge" class="badge ok">Modo IA-first</span> A Débora conduz o atendimento com base exclusiva nos documentos oficiais. Sem IA operacional, a conversa é transferida com segurança.</p>
+            <p class="panel-description"><span id="automation-mode-badge" class="badge ok">Somente IA</span> A Débora usa a OpenAI e a base documental oficial. Sem chave ou crédito operacional, o atendimento automático fica indisponível.</p>
             <p class="panel-description">Se configurada, a chave é validada pela OpenAI e armazenada cifrada no servidor. Ela nunca volta para o navegador.</p>
             <div class="integration-health">
               <div><span>Disponibilidade de crédito</span><strong id="openai-credit-status">Ainda não testada</strong><small id="openai-credit-detail">A chave comum não informa o saldo exato.</small></div>
@@ -119,8 +121,8 @@
           </article>
 
           <article class="panel followup-panel">
-            <div class="panel-heading"><div><span class="panel-kicker">Recuperação de oportunidades</span><h2>Acompanhamento 15/30/45</h2></div><span id="followup-badge" class="badge neutral">Inativo</span></div>
-            <p class="panel-description">Até três contatos contextuais após 15, 30 e 45 dias. Resposta, conversão, desinteresse, atendimento do coordenador ou SAIR interrompem imediatamente a sequência.</p>
+            <div class="panel-heading"><div><span class="panel-kicker">Recuperação de oportunidades</span><h2>Acompanhamento 30/60/90</h2></div><span id="followup-badge" class="badge neutral">Inativo</span></div>
+            <p class="panel-description">Até três contatos mensais, apenas para leads quentes. Resposta, conversão, desinteresse, atendimento do coordenador ou SAIR interrompem imediatamente a sequência.</p>
             <div class="followup-metrics">
               <div><strong id="followup-hot">0</strong><span>Leads quentes</span></div>
               <div><strong id="followup-eligible">0</strong><span>Elegíveis</span></div>
@@ -161,7 +163,7 @@
       <section id="section-integrations" class="dashboard-section" hidden>
         <div class="section-title"><span class="page-kicker">Configuração</span><h2>Integrações</h2><p>Gerencie as credenciais e o canal usados pela automação.</p></div>
         <div class="integration-summary">
-          <article class="panel"><span class="integration-icon">AI</span><h3>OpenAI</h3><p>Fallback opcional para mensagens que as regras não reconhecerem.</p><span id="integration-ai-state" class="badge warning">Opcional</span></article>
+          <article class="panel"><span class="integration-icon">AI</span><h3>OpenAI</h3><p>Motor obrigatório do atendimento automático. A chave fica cifrada no servidor.</p><span id="integration-ai-state" class="badge warning">Obrigatória</span></article>
           <article class="panel"><span class="integration-icon">WA</span><h3>Evolution API</h3><p>Conexão segura com o WhatsApp da Bioecos.</p><span id="integration-wa-state" class="badge neutral">Desconectado</span></article>
           <article class="panel"><span class="integration-icon">CO</span><h3>Coordenador</h3><p>Número que recebe alertas de leads quentes. Ele é armazenado cifrado e não volta ao navegador.</p><span id="integration-coordinator-state" class="badge warning">Pendente</span>
             <form id="coordinator-form"><label for="coordinator-phone">WhatsApp com DDI</label><input id="coordinator-phone" inputmode="tel" placeholder="5521999999999" required><button class="primary-action wide-action" type="submit">Salvar número</button><p id="coordinator-feedback" class="inline-feedback"></p></form>
@@ -177,6 +179,6 @@
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20260827-ai-first" defer></script>
+  <script src="assets/app.js?v=20260827-ai-only" defer></script>
 </body>
 </html>

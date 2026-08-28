@@ -86,7 +86,7 @@ describe("rotas do dashboard", () => {
     await app.close();
   });
 
-  it("permite conectar o WhatsApp sem chave OpenAI no modo híbrido", async () => {
+  it("mantém a configuração técnica do WhatsApp independente da chave de IA", async () => {
     const { app } = await setup();
     const login = await app.inject({
       method: "POST",

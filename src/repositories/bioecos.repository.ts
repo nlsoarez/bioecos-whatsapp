@@ -53,4 +53,8 @@ export interface BioecosRepository {
   setAutomationPaused(conversationId: string, paused: boolean, actor: string): Promise<void>;
   getDashboard(): Promise<unknown>;
   getContactView(contactId: string): Promise<unknown | null>;
+  getConversationContactId(conversationId: string): Promise<string | null>;
+  recordHumanOutbound(message: import("../domain/types.js").OutboundWebhookMessage): Promise<boolean>;
+  exportContactData(contactId: string): Promise<unknown | null>;
+  deleteContactData(contactId: string, actor: string): Promise<boolean>;
 }

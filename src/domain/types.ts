@@ -60,6 +60,7 @@ export interface MonthlyFollowupCandidate {
   attempts: number;
   step: 1 | 2 | 3;
   sequenceId: string;
+  lockToken?: string;
 }
 
 export interface MonthlyFollowupSettings {
@@ -96,6 +97,14 @@ export interface InboundMessage {
   externalMessageId: string;
   phone: string;
   pushName: string | null;
+  content: string;
+  timestamp: Date;
+  raw: unknown;
+}
+
+export interface OutboundWebhookMessage {
+  externalMessageId: string;
+  phone: string;
   content: string;
   timestamp: Date;
   raw: unknown;

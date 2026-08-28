@@ -5,6 +5,7 @@ import type {
   ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
   IngestResult, KnowledgeHit, LeadAssessment, LeadTemperature, MonthlyFollowupCandidate,
   MonthlyFollowupSettings, QualificationStep,
+  OutboundWebhookMessage,
 } from "../domain/types.js";
 import type { BioecosRepository, ContactUpdate } from "./bioecos.repository.js";
 
@@ -57,7 +58,7 @@ export class PostgresRepository implements BioecosRepository {
       const inserted = await client.query(
         `INSERT INTO messages(conversation_id, external_message_id, direction, content, timestamp, metadata)
          VALUES ($1, $2, 'inbound', $3, $4, $5) ON CONFLICT(external_message_id) DO NOTHING RETURNING id`,
-        [conversationId, message.externalMessageId, message.content, message.timestamp, JSON.stringify(message.raw)],
+        [conversationId, message.externalMessageId, message.content, message.timestamp, JSON.stringify({ source: "evolution" })],
       );
       const duplicate = inserted.rowCount === 0;
       if (!duplicate) {
@@ -179,7 +180,7 @@ export class PostgresRepository implements BioecosRepository {
           ELSE $2
         END,
         followup_enabled = CASE WHEN $3 AND NOT followup_opt_out THEN true ELSE followup_enabled END,
-        followup_next_at = CASE WHEN $3 AND NOT followup_opt_out THEN coalesce(followup_next_at, now() + interval '15 days') ELSE followup_next_at END,
+        followup_next_at = CASE WHEN $3 AND NOT followup_opt_out THEN coalesce(followup_next_at, now() + interval '30 days') ELSE followup_next_at END,
         updated_at = now() WHERE id = $1`,
       [context.leadId, temperature, enableMonthlyFollowup],
     );
@@ -230,12 +231,13 @@ export class PostgresRepository implements BioecosRepository {
   async scheduleFollowups(context: ContactContext): Promise<void> {
     await this.pool.query(
       `UPDATE leads SET followup_enabled = true, followup_attempts = 0,
-       followup_next_at = now() + interval '15 days', followup_sequence_id = gen_random_uuid(),
-       followup_last_error = null, updated_at = now()
-       WHERE id = $1 AND followup_opt_out = false AND enrollment_status = 'pending'`,
+       followup_next_at = now() + interval '30 days', followup_sequence_id = gen_random_uuid(),
+       followup_last_error = null, followup_failure_attempts = 0, followup_locked_at = null,
+       followup_lock_token = null, updated_at = now()
+       WHERE id = $1 AND temperature = 'hot' AND followup_opt_out = false AND enrollment_status = 'pending'`,
       [context.leadId],
     );
-    await this.auditForContext(context, "automation", "followup.scheduled", { days: [15, 30, 45] });
+    await this.auditForContext(context, "automation", "followup.scheduled", { days: [30, 60, 90], eligibility: "hot" });
   }
 
   async cancelFollowups(context: ContactContext, reason: string): Promise<void> {
@@ -263,7 +265,7 @@ export class PostgresRepository implements BioecosRepository {
     );
     const row = result.rows[0];
     return row ? { enabled: row.enabled, intervalDays: row.interval_days, maxAttempts: row.max_attempts, scheduleDays: row.schedule_days }
-      : { enabled: false, intervalDays: 30, maxAttempts: 3, scheduleDays: [15, 30, 45] };
+      : { enabled: false, intervalDays: 30, maxAttempts: 3, scheduleDays: [30, 60, 90] };
   }
 
   async setMonthlyFollowupEnabled(enabled: boolean): Promise<MonthlyFollowupSettings> {
@@ -286,11 +288,14 @@ export class PostgresRepository implements BioecosRepository {
   }
 
   async getDueMonthlyFollowups(limit: number): Promise<MonthlyFollowupCandidate[]> {
+    const lockToken = randomUUID();
     const result = await this.pool.query<{
       lead_id: string; contact_id: string; conversation_id: string; phone: string;
-      name: string | null; course: string; attempts: number; sequence_id: string;
+      name: string | null; course: string; attempts: number; sequence_id: string; lock_token: string;
     }>(
-      `SELECT l.id AS lead_id, c.id AS contact_id, cv.id AS conversation_id, c.phone, c.name,
+      `UPDATE leads claimed SET followup_locked_at = now(), followup_lock_token = $2
+       FROM (
+       SELECT l.id AS lead_id, c.id AS contact_id, cv.id AS conversation_id, c.phone, c.name,
         l.course, l.followup_attempts AS attempts, l.followup_sequence_id AS sequence_id
        FROM leads l JOIN contacts c ON c.id = l.contact_id
        JOIN projects p ON p.id = c.project_id AND p.slug = 'bioecos'
@@ -301,27 +306,34 @@ export class PostgresRepository implements BioecosRepository {
          AND l.followup_enabled = true AND l.followup_opt_out = false
          AND l.course IS NOT NULL AND length(trim(l.course)) > 0
          AND l.followup_next_at <= now() AND l.followup_attempts < s.followup_max_attempts
+         AND l.followup_failure_attempts < 3
+         AND (l.followup_locked_at IS NULL OR l.followup_locked_at < now() - interval '10 minutes')
          AND l.enrollment_status = 'pending'
          AND ps.name NOT IN ('Convertido', 'Encerrado', 'Matrícula concluída', 'Sem interesse', 'Conversa finalizada')
          AND cv.automation_paused = false AND cv.workflow_state = 'ai_attending' AND cv.current_owner = 'ai'
          AND cv.last_interaction_at < l.followup_next_at
-       ORDER BY l.followup_next_at ASC LIMIT $1`,
-      [Math.max(1, Math.min(limit, 100))],
+       ORDER BY l.followup_next_at ASC FOR UPDATE OF l SKIP LOCKED LIMIT $1
+       ) due WHERE claimed.id = due.lead_id
+       RETURNING due.lead_id, due.contact_id, due.conversation_id, due.phone, due.name,
+         due.course, due.attempts, due.sequence_id, claimed.followup_lock_token AS lock_token`,
+      [Math.max(1, Math.min(limit, 100)), lockToken],
     );
     return result.rows.map((row) => ({
       leadId: row.lead_id, contactId: row.contact_id, conversationId: row.conversation_id,
       phone: row.phone, name: row.name, course: row.course, attempts: row.attempts,
       step: Math.min(3, row.attempts + 1) as 1 | 2 | 3, sequenceId: row.sequence_id,
+      lockToken: row.lock_token,
     }));
   }
 
   async markMonthlyFollowupSent(candidate: MonthlyFollowupCandidate, content: string): Promise<void> {
     await this.pool.query(
       `UPDATE leads SET followup_attempts = followup_attempts + 1, followup_last_at = now(),
-        followup_next_at = CASE WHEN followup_attempts + 1 >= 3 THEN null ELSE now() + interval '15 days' END,
-        followup_enabled = followup_attempts + 1 < 3, followup_last_error = null, updated_at = now()
-       WHERE id = $1`,
-      [candidate.leadId],
+        followup_next_at = CASE WHEN followup_attempts + 1 >= 3 THEN null ELSE now() + interval '30 days' END,
+        followup_enabled = followup_attempts + 1 < 3, followup_last_error = null,
+        followup_failure_attempts = 0, followup_locked_at = null, followup_lock_token = null, updated_at = now()
+       WHERE id = $1 AND ($2::uuid IS NULL OR followup_lock_token = $2::uuid)`,
+      [candidate.leadId, candidate.lockToken ?? null],
     );
     await this.pool.query(
       `INSERT INTO followup_events(lead_id, conversation_id, sequence_id, step, status, content)
@@ -334,9 +346,13 @@ export class PostgresRepository implements BioecosRepository {
 
   async markMonthlyFollowupFailed(candidate: MonthlyFollowupCandidate, error: string): Promise<void> {
     await this.pool.query(
-      `UPDATE leads SET followup_last_error = $2, followup_next_at = now() + interval '1 day', updated_at = now()
-       WHERE id = $1`,
-      [candidate.leadId, error.slice(0, 500)],
+      `UPDATE leads SET followup_failure_attempts = followup_failure_attempts + 1,
+       followup_enabled = followup_failure_attempts + 1 < 3,
+       followup_last_error = $2,
+       followup_next_at = CASE WHEN followup_failure_attempts + 1 >= 3 THEN null ELSE now() + interval '1 day' END,
+       followup_locked_at = null, followup_lock_token = null, updated_at = now()
+       WHERE id = $1 AND ($3::uuid IS NULL OR followup_lock_token = $3::uuid)`,
+      [candidate.leadId, error.slice(0, 500), candidate.lockToken ?? null],
     );
     await this.pool.query(
       `INSERT INTO followup_events(lead_id, conversation_id, sequence_id, step, status, error)
@@ -573,6 +589,75 @@ export class PostgresRepository implements BioecosRepository {
     return { ...contact.rows[0], history: history.rows, temperatureHistory: temperatures.rows, followupHistory: followups.rows };
   }
 
+  async getConversationContactId(conversationId: string): Promise<string | null> {
+    const result = await this.pool.query<{ contact_id: string }>("SELECT contact_id FROM conversations WHERE id = $1", [conversationId]);
+    return result.rows[0]?.contact_id ?? null;
+  }
+
+  async recordHumanOutbound(message: OutboundWebhookMessage): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const target = await client.query<{ conversation_id: string; contact_id: string; project_id: string }>(
+        `SELECT cv.id AS conversation_id, c.id AS contact_id, c.project_id
+         FROM contacts c JOIN conversations cv ON cv.contact_id = c.id AND cv.status = 'open'
+         JOIN projects p ON p.id = c.project_id AND p.slug = 'bioecos' WHERE c.phone = $1 LIMIT 1`,
+        [message.phone],
+      );
+      const row = target.rows[0];
+      if (!row) { await client.query("ROLLBACK"); return false; }
+      const inserted = await client.query(
+        `INSERT INTO messages(conversation_id, external_message_id, direction, content, timestamp, metadata)
+         VALUES ($1, $2, 'outbound', $3, $4, '{"source":"coordinator_whatsapp"}'::jsonb)
+         ON CONFLICT(external_message_id) DO NOTHING RETURNING id`,
+        [row.conversation_id, message.externalMessageId, message.content, message.timestamp],
+      );
+      if (inserted.rowCount === 0) { await client.query("COMMIT"); return false; }
+      await client.query(
+        `UPDATE conversations SET automation_paused = true, workflow_state = 'coordinator_attending',
+         current_owner = 'coordinator', last_interaction_at = greatest(last_interaction_at, $2)
+         WHERE id = $1`,
+        [row.conversation_id, message.timestamp],
+      );
+      await this.audit(client, row.project_id, row.contact_id, row.conversation_id, "coordinator", "message.outbound_manual", {});
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async exportContactData(contactId: string): Promise<unknown | null> {
+    return this.getContactView(contactId);
+  }
+
+  async deleteContactData(contactId: string, actor: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const target = await client.query<{ project_id: string; conversation_id: string | null }>(
+        `SELECT c.project_id, cv.id AS conversation_id FROM contacts c
+         LEFT JOIN LATERAL (SELECT id FROM conversations WHERE contact_id = c.id ORDER BY started_at DESC LIMIT 1) cv ON true
+         WHERE c.id = $1 FOR UPDATE OF c`,
+        [contactId],
+      );
+      const row = target.rows[0];
+      if (!row) { await client.query("ROLLBACK"); return false; }
+      await this.audit(client, row.project_id, contactId, row.conversation_id, actor, "contact.deleted_lgpd", {});
+      await client.query("DELETE FROM contacts WHERE id = $1", [contactId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private async loadContext(queryable: Queryable, contactId: string, conversationId: string, leadId: string): Promise<ContactContext> {
     const result = await queryable.query<{
       phone: string; name: string | null; email: string | null; city: string | null; company_name: string | null;
@@ -635,7 +720,7 @@ export class PostgresRepository implements BioecosRepository {
     await this.audit(this.pool, project.rows[0]!.project_id, context.contactId, context.conversationId, actor, action, details);
   }
 
-  private async audit(queryable: Queryable, projectId: string, contactId: string, conversationId: string, actor: string, action: string, details: unknown): Promise<void> {
+  private async audit(queryable: Queryable, projectId: string, contactId: string, conversationId: string | null, actor: string, action: string, details: unknown): Promise<void> {
     await queryable.query(
       "INSERT INTO audit_logs(project_id, contact_id, conversation_id, actor, action, details) VALUES ($1, $2, $3, $4, $5, $6)",
       [projectId, contactId, conversationId, actor, action, JSON.stringify(details)],

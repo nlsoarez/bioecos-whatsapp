@@ -6,10 +6,12 @@ import type { BioecosRepository } from "../repositories/bioecos.repository.js";
 import { authenticateCredentials, createSessionToken, requireDashboardSession } from "../security/dashboard-auth.js";
 import type { RuntimeSecretStore } from "../security/runtime-secret.store.js";
 import { ConversationService } from "../services/conversation.service.js";
-import { EvolutionService, parseEvolutionWebhook } from "../services/evolution.service.js";
+import { EvolutionService, parseEvolutionOutboundWebhook, parseEvolutionWebhook } from "../services/evolution.service.js";
 import { OpenAIResponsesClient } from "../services/openai.service.js";
 import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "../services/coordinator-notification.service.js";
 import type { ConversationWorkflowState } from "../domain/types.js";
+import type { KnowledgeEmbeddingService } from "../services/knowledge-embedding.service.js";
+import type { WebhookJobService } from "../services/webhook-job.service.js";
 
 interface Dependencies {
   env: Env;
@@ -19,6 +21,8 @@ interface Dependencies {
   openai: OpenAIResponsesClient;
   secrets: RuntimeSecretStore;
   coordinatorNotifier?: CoordinatorNotifier;
+  embeddings?: KnowledgeEmbeddingService;
+  webhookJobs?: WebhookJobService;
 }
 
 function assertAdmin(request: FastifyRequest, env: Env): void {
@@ -33,19 +37,41 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   const { env, repository, evolution, conversations, openai, secrets } = dependencies;
   const coordinatorNotifier = dependencies.coordinatorNotifier ?? new NoopCoordinatorNotifier();
 
+  app.get("/live", async () => ({ status: "ok", backend: true }));
+
   app.get("/health", async (_request, reply) => {
     let database = false;
     try { database = await repository.health(); } catch { database = false; }
     const [evolutionState, webhookState] = await Promise.all([evolution.health(), evolution.webhookStatus()]);
     const aiSecret = await secrets.status("OPENAI_API_KEY");
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || aiSecret.configured;
-    return reply.code(database ? 200 : 503).send({
-      status: database ? "ok" : "degraded",
+    const aiHealth = openai.getHealthStatus();
+    const operational = database && evolutionState.reachable && webhookState.healthy && aiConfigured && aiHealth.state === "operational";
+    return reply.code(operational ? 200 : 503).send({
+      status: operational ? "operational" : "attention",
       backend: true,
       database,
       evolution: { ...evolutionState, webhook: webhookState },
-      ai: { configured: aiConfigured, provider: env.AI_PROVIDER, model: env.AI_MODEL },
-      automation: { mode: env.AUTOMATION_MODE, aiFallbackConfigured: aiConfigured },
+      ai: { configured: aiConfigured, provider: env.AI_PROVIDER, model: env.AI_MODEL, health: aiHealth },
+      automation: { mode: "ai-only", aiRequired: true },
+    });
+  });
+
+  app.get("/ready", async (_request, reply) => {
+    const [database, evolutionState, webhookState, embeddingState, queueState] = await Promise.all([
+      repository.health().catch(() => false), evolution.health(), evolution.webhookStatus(),
+      dependencies.embeddings?.status().catch(() => null) ?? null,
+      dependencies.webhookJobs?.status().catch(() => null) ?? null,
+    ]);
+    const aiSecret = await secrets.status("OPENAI_API_KEY");
+    const aiConfigured = Boolean(env.OPENAI_API_KEY) || aiSecret.configured;
+    const aiHealth = openai.getHealthStatus();
+    const ready = database && evolutionState.reachable && webhookState.healthy && aiConfigured
+      && aiHealth.state === "operational" && (embeddingState?.pending ?? 0) === 0 && (queueState?.failed ?? 0) === 0;
+    return reply.code(ready ? 200 : 503).send({
+      status: ready ? "ready" : "not_ready", database,
+      evolution: evolutionState, webhook: webhookState,
+      ai: { configured: aiConfigured, ...aiHealth }, embeddings: embeddingState, queue: queueState,
     });
   });
 
@@ -54,12 +80,24 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
       return reply.code(401).send({ error: "Webhook não autorizado" });
     }
     const inbound = parseEvolutionWebhook(request.body);
-    if (!inbound) return reply.code(202).send({ accepted: false, reason: "ignored_event" });
-    const result = await conversations.handle(inbound);
-    return reply.code(200).send({ accepted: true, status: result.status });
+    const outbound = inbound ? null : parseEvolutionOutboundWebhook(request.body);
+    if (!inbound && !outbound) return reply.code(202).send({ accepted: false, reason: "ignored_event" });
+    if (dependencies.webhookJobs) {
+      const accepted = await dependencies.webhookJobs.enqueue(inbound
+        ? { kind: "inbound", message: inbound }
+        : { kind: "human_outbound", message: outbound! });
+      return reply.code(202).send({ accepted, status: accepted ? "queued" : "duplicate" });
+    }
+    if (inbound) {
+      const result = await conversations.handle(inbound);
+      return reply.code(200).send({ accepted: true, status: result.status });
+    }
+    const automated = evolution.isAutomatedOutbound(outbound!.phone, outbound!.content);
+    const accepted = automated ? false : await repository.recordHumanOutbound(outbound!);
+    return reply.code(202).send({ accepted, status: automated ? "automated_echo" : "human_outbound" });
   });
 
-  app.post("/dashboard/auth/login", async (request, reply) => {
+  app.post("/dashboard/auth/login", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
     const credentials = z.object({
       username: z.string().min(1).max(100),
       password: z.string().min(1).max(500),
@@ -82,7 +120,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.get("/dashboard/overview", async (request) => {
     requireDashboardSession(request, env);
-    const [database, evolutionState, webhookState, ai, coordinator, dashboard, followupSettings] = await Promise.all([
+    const [database, evolutionState, webhookState, ai, coordinator, dashboard, followupSettings, embeddings, queue] = await Promise.all([
       repository.health().catch(() => false),
       evolution.connectionState(),
       evolution.webhookStatus(),
@@ -90,20 +128,24 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
       secrets.status("COORDINATOR_WHATSAPP"),
       repository.getDashboard(),
       repository.getMonthlyFollowupSettings(),
+      dependencies.embeddings?.status().catch(() => null) ?? null,
+      dependencies.webhookJobs?.status().catch(() => null) ?? null,
     ]);
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || ai.configured;
     const aiHealth = openai.getHealthStatus();
     return {
-      status: database && evolutionState.state === "open" && webhookState.healthy ? "operational" : "attention",
+      status: database && evolutionState.state === "open" && webhookState.healthy && aiConfigured
+        && aiHealth.state === "operational" && (embeddings?.pending ?? 0) === 0 ? "operational" : "attention",
       services: {
         api: true,
         database,
-        automation: { mode: env.AUTOMATION_MODE, aiFallback: aiConfigured && aiHealth.state === "operational" },
+        automation: { mode: "ai-only", aiRequired: true, operational: aiConfigured && aiHealth.state === "operational" },
         ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL, health: aiHealth },
         whatsapp: { ...evolutionState, webhook: webhookState },
         coordinator: { configured: coordinator.configured, updatedAt: coordinator.updatedAt },
       },
       metrics: { ...(dashboard as Record<string, unknown>), followupSettings },
+      operations: { embeddings, queue, retentionDays: env.DATA_RETENTION_DAYS },
       checkedAt: new Date().toISOString(),
     };
   });
@@ -118,7 +160,10 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     }
     await secrets.set("OPENAI_API_KEY", apiKey);
     const health = await openai.testCredit();
-    return { configured: true, updatedAt: new Date().toISOString(), health };
+    const embeddings = await dependencies.embeddings?.status() ?? null;
+    if (health.state === "operational" && dependencies.embeddings) void dependencies.embeddings.runPending();
+    return { configured: true, updatedAt: new Date().toISOString(), health,
+      embeddings: embeddings ? { ...embeddings, triggered: health.state === "operational" } : null };
   });
 
   app.post("/dashboard/openai/test", async (request) => {
@@ -167,6 +212,29 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     return lead ? { lead } : reply.code(404).send({ error: "Lead não encontrado" });
   });
 
+  app.get<{ Params: { conversationId: string } }>("/dashboard/conversations/:conversationId", async (request, reply) => {
+    requireDashboardSession(request, env);
+    const contactId = await repository.getConversationContactId(request.params.conversationId);
+    if (!contactId) return reply.code(404).send({ error: "Conversa não encontrada" });
+    return { lead: await repository.getContactView(contactId) };
+  });
+
+  app.get<{ Params: { contactId: string } }>("/dashboard/leads/:contactId/export", async (request, reply) => {
+    requireDashboardSession(request, env);
+    const data = await repository.exportContactData(request.params.contactId);
+    if (!data) return reply.code(404).send({ error: "Lead não encontrado" });
+    reply.header("content-disposition", `attachment; filename=lead-${request.params.contactId}.json`);
+    return data;
+  });
+
+  app.delete<{ Params: { contactId: string } }>("/dashboard/leads/:contactId", async (request, reply) => {
+    const session = requireDashboardSession(request, env);
+    const values = z.object({ confirm: z.literal("EXCLUIR") }).parse(request.body);
+    void values;
+    const deleted = await repository.deleteContactData(request.params.contactId, `dashboard:${session.sub}`);
+    return deleted ? { deleted: true } : reply.code(404).send({ error: "Lead não encontrado" });
+  });
+
   app.patch<{ Params: { conversationId: string } }>("/dashboard/conversations/:conversationId/workflow", async (request) => {
     requireDashboardSession(request, env);
     const values = z.object({
@@ -186,6 +254,12 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   app.post<{ Params: { id: string } }>("/dashboard/notifications/:id/retry", async (request) => {
     requireDashboardSession(request, env);
     return coordinatorNotifier.retry(request.params.id);
+  });
+
+  app.post("/dashboard/webhooks/retry-failed", async (request) => {
+    requireDashboardSession(request, env);
+    if (!dependencies.webhookJobs) return { retried: 0 };
+    return { retried: await dependencies.webhookJobs.retryFailed() };
   });
 
   app.get("/dashboard/whatsapp", async (request) => {

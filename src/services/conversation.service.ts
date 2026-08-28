@@ -5,7 +5,6 @@ import type { BioecosRepository } from "../repositories/bioecos.repository.js";
 import type { MessageSender } from "./evolution.service.js";
 import type { AgentClient } from "./openai.service.js";
 import { assessLead } from "./lead-assessment.service.js";
-import { FOLLOWUP_OPT_OUT_PATTERN } from "./qualification.service.js";
 import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "./coordinator-notification.service.js";
 import { ToolService } from "./tool.service.js";
 
@@ -13,6 +12,7 @@ const HANDOFF_MESSAGE = "Entendi. Registrei o que você precisa e a coordenaçã
 const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e encerrei os acompanhamentos automáticos.";
 const TEMPORARY_ERROR_MESSAGE = "Estou com uma instabilidade temporária e não consegui concluir essa resposta agora. Por favor, tente novamente em alguns instantes.";
 const GREETING_PATTERN = /^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê]|tudo bem)[!?.\s]*$/i;
+const FOLLOWUP_OPT_OUT_PATTERN = /^(?:sair|parar|cancelar|n[aã]o quero (?:mais )?(?:mensagens|acompanhamento)|remova meu contato)[.!\s]*$/i;
 const COURSE_OVERVIEW_PATTERN = /(?:quais?|lista|op[cç][oõ]es?|todos?).{0,30}(?:cursos?|forma[cç][oõ]es?)|(?:cursos?|forma[cç][oõ]es?).{0,30}(?:tem|t[eê]m|oferece|dispon[ií]ve)/i;
 const COURSE_CONTENT_SUMMARIES: Record<string, string> = {
   "Plantas Medicinais": "Nos conteúdos publicados pela Bioecos, Plantas Medicinais inclui identificação das plantas, escolha da parte utilizada, colheita e extração de princípios ativos, com preparo por infusão, decocção e tinturas.",
@@ -87,7 +87,7 @@ export class ConversationService {
       await this.repository.updateContact(ingestion.context, { objective });
       const response = `Entendi: seu objetivo com ${selectedCourse} é ${objective}. Registrei essa informação. Você quer esclarecer alguma dúvida específica sobre o curso ou deseja avançar para a inscrição?`;
       await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
-      if (!wasFollowupReply && assessment.temperature === "warm") await this.repository.scheduleFollowups(ingestion.context);
+      if (!wasFollowupReply && assessment.temperature === "hot") await this.repository.scheduleFollowups(ingestion.context);
       return { status: "responded", response };
     }
 
@@ -123,7 +123,7 @@ export class ConversationService {
     }
 
     await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
-    if (!wasFollowupReply && assessment.temperature === "warm" && assessment.course) {
+    if (!wasFollowupReply && assessment.temperature === "hot" && assessment.course) {
       await this.repository.scheduleFollowups(ingestion.context);
     }
     return { status: "responded", response };

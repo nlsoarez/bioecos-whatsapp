@@ -9,6 +9,7 @@ const loginForm = byId("login-form");
 const loginError = byId("login-error");
 const loginSubmit = byId("login-submit");
 let refreshTimer = null;
+let openedHash = "";
 
 byId("toggle-password")?.addEventListener("click", () => toggleVisibility("password", "toggle-password"));
 byId("toggle-api-key")?.addEventListener("click", () => toggleVisibility("openai-key", "toggle-api-key"));
@@ -51,6 +52,7 @@ loginForm?.addEventListener("submit", async (event) => {
     byId("operator-name").textContent = result.user.username;
     showDashboard();
     await refreshOverview();
+    await openConversationFromHash();
   } catch (error) {
     setFeedback(loginError, error.message, "error");
   } finally {
@@ -89,6 +91,7 @@ async function restoreSession() {
     byId("operator-name").textContent = session.user.username;
     showDashboard();
     await refreshOverview();
+    await openConversationFromHash();
   } catch {
     logout();
   }
@@ -116,7 +119,6 @@ async function refreshOverview() {
     const overview = await api("/dashboard/overview");
     renderOverview(overview);
     await loadNotificationFailures();
-    byId("global-alert").hidden = true;
   } catch (error) {
     const alert = byId("global-alert");
     alert.textContent = `Não foi possível atualizar o painel: ${error.message}`;
@@ -157,6 +159,21 @@ async function loadNotificationFailures() {
 
 function renderOverview(overview) {
   const { services = {}, metrics = {} } = overview;
+  const operations = overview.operations ?? {};
+  const operationalProblems = [];
+  if (Number(operations.embeddings?.pending) > 0) operationalProblems.push(`${operations.embeddings.pending} trecho(s) aguardando vetorização`);
+  if (Number(operations.queue?.failed) > 0) operationalProblems.push(`${operations.queue.failed} webhook(s) em falha definitiva`);
+  const operationalAlert = byId("global-alert");
+  operationalAlert.replaceChildren();
+  operationalAlert.hidden = operationalProblems.length === 0;
+  if (operationalProblems.length) {
+    const text = document.createElement("span"); text.textContent = `Atenção operacional: ${operationalProblems.join("; ")}. `; operationalAlert.append(text);
+    if (Number(operations.queue?.failed) > 0) {
+      const retry = document.createElement("button"); retry.type = "button"; retry.className = "secondary-action"; retry.textContent = "Reprocessar webhooks";
+      retry.addEventListener("click", async () => { retry.disabled = true; try { await api("/dashboard/webhooks/retry-failed", { method: "POST" }); await refreshOverview(); } catch (error) { window.alert(error.message); } });
+      operationalAlert.append(retry);
+    }
+  }
   setService("api", Boolean(services.api), services.api ? "Operacional" : "Indisponível");
   setService("database", Boolean(services.database), services.database ? "Conectado" : "Indisponível");
   const aiConfigured = Boolean(services.ai?.configured);
@@ -167,11 +184,11 @@ function renderOverview(overview) {
     invalid_key: "Chave inválida",
     rate_limited: "Limite temporário",
     unavailable: "Indisponível",
-    not_tested: aiConfigured ? "Crédito não testado" : "Fallback opcional",
+    not_tested: aiConfigured ? "Crédito não testado" : "Chave obrigatória",
   };
   const aiOperational = aiConfigured && aiHealth.state === "operational";
   setService("ai", aiOperational, aiLabels[aiHealth.state] ?? "Requer atenção", aiConfigured && aiHealth.state === "not_tested");
-  byId("ai-model").textContent = `Modo IA-first · ${services.ai?.model || "OpenAI"}`;
+  byId("ai-model").textContent = `Somente IA · ${services.ai?.model || "OpenAI"}`;
   byId("openai-credit-status").textContent = aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Chave não configurada";
   byId("openai-credit-detail").textContent = aiConfigured ? aiHealth.message : "Configure uma chave para testar.";
   byId("test-openai-credit").disabled = !aiConfigured;
@@ -188,8 +205,8 @@ function renderOverview(overview) {
   byId("whatsapp-disconnected").hidden = whatsappConnected;
 
   const aiBadgeState = aiOperational ? "ok" : (aiHealth.state === "insufficient_quota" || aiHealth.state === "invalid_key" ? "danger" : "warning");
-  setBadge("ai-badge", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Opcional", aiBadgeState);
-  setBadge("integration-ai-state", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Opcional", aiBadgeState);
+  setBadge("ai-badge", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Obrigatória", aiBadgeState);
+  setBadge("integration-ai-state", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Obrigatória", aiBadgeState);
   byId("remove-api-key").hidden = !aiConfigured;
   byId("connect-whatsapp").disabled = whatsappConnected;
   byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : "Gerar QR Code";
@@ -219,11 +236,11 @@ function renderFollowup(metrics, settings) {
 async function toggleMonthlyFollowup() {
   const button = byId("toggle-followup");
   const currentlyEnabled = button.dataset.enabled === "true";
-  if (!currentlyEnabled && !window.confirm("Ao ativar, leads elegíveis poderão receber até três mensagens automáticas nos dias 15, 30 e 45. Deseja ativar?")) return;
+  if (!currentlyEnabled && !window.confirm("Ao ativar, leads quentes elegíveis poderão receber até três mensagens automáticas nos dias 30, 60 e 90. Deseja ativar?")) return;
   button.disabled = true;
   try {
     await api("/dashboard/settings/monthly-followup", { method: "PUT", body: { enabled: !currentlyEnabled } });
-    setFeedback(byId("followup-feedback"), currentlyEnabled ? "Acompanhamento 15/30/45 desativado." : "Acompanhamento 15/30/45 ativado.", "success");
+    setFeedback(byId("followup-feedback"), currentlyEnabled ? "Acompanhamento 30/60/90 desativado." : "Acompanhamento 30/60/90 ativado.", "success");
     await refreshOverview();
   } catch (error) {
     setFeedback(byId("followup-feedback"), error.message, "error");
@@ -325,6 +342,10 @@ function renderLeadDetail(lead) {
     const button = document.createElement("button"); button.type = "button"; button.className = state === "enrollment_completed" ? "primary-action" : "secondary-action"; button.textContent = label;
     button.addEventListener("click", () => changeWorkflow(lead.conversation_id, state, label)); actions.append(button);
   });
+  const exportButton = document.createElement("button"); exportButton.type = "button"; exportButton.className = "secondary-action"; exportButton.textContent = "Exportar dados";
+  exportButton.addEventListener("click", () => exportLead(lead.id)); actions.append(exportButton);
+  const deleteButton = document.createElement("button"); deleteButton.type = "button"; deleteButton.className = "secondary-action danger-action"; deleteButton.textContent = "Excluir dados";
+  deleteButton.addEventListener("click", () => deleteLead(lead.id)); actions.append(deleteButton);
   const history = document.createElement("div"); history.className = "message-history";
   (lead.history || []).slice().reverse().forEach((message) => {
     const item = document.createElement("div"); item.className = `message-item ${message.direction}`;
@@ -334,6 +355,41 @@ function renderLeadDetail(lead) {
   });
   if (!history.children.length) history.append(emptyState("Sem mensagens registradas."));
   detail.append(heading, meta, summary, actions, history);
+}
+
+async function openConversationFromHash() {
+  const match = location.hash.match(/^#conversation-([0-9a-f-]{36})$/i);
+  if (!match || openedHash === location.hash) return;
+  openedHash = location.hash;
+  try {
+    const { lead } = await api(`/dashboard/conversations/${encodeURIComponent(match[1])}`);
+    showSection("leads");
+    renderLeadDetail(lead);
+    byId("lead-detail").hidden = false;
+    byId("lead-detail").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    window.alert(`Não foi possível abrir a conversa: ${error.message}`);
+  }
+}
+
+async function exportLead(contactId) {
+  try {
+    const data = await api(`/dashboard/leads/${encodeURIComponent(contactId)}/export`);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = url; link.download = `lead-${contactId}.json`; link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) { window.alert(error.message); }
+}
+
+async function deleteLead(contactId) {
+  if (!window.confirm("Esta ação exclui definitivamente o contato, conversas, mensagens e histórico associado. Deseja continuar?")) return;
+  const confirmation = window.prompt("Digite EXCLUIR para confirmar:");
+  if (confirmation !== "EXCLUIR") return;
+  try {
+    await api(`/dashboard/leads/${encodeURIComponent(contactId)}`, { method: "DELETE", body: { confirm: "EXCLUIR" } });
+    byId("lead-detail").hidden = true;
+    await loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");
+  } catch (error) { window.alert(error.message); }
 }
 
 async function changeWorkflow(conversationId, state, label) {

@@ -23,7 +23,7 @@ export class InMemoryRepository implements BioecosRepository {
   handoffs: Array<{ reason: string; summary: string }> = [];
   knowledge: KnowledgeHit[] = [];
   searchCalls: string[] = [];
-  monthlySettings: MonthlyFollowupSettings = { enabled: false, intervalDays: 30, maxAttempts: 3, scheduleDays: [15, 30, 45] };
+  monthlySettings: MonthlyFollowupSettings = { enabled: false, intervalDays: 30, maxAttempts: 3, scheduleDays: [30, 60, 90] };
   monthlyCandidates: MonthlyFollowupCandidate[] = [];
   monthlySent: MonthlyFollowupCandidate[] = [];
   monthlyFailures: Array<{ candidate: MonthlyFollowupCandidate; error: string }> = [];
@@ -130,4 +130,14 @@ export class InMemoryRepository implements BioecosRepository {
   async setAutomationPaused(_conversationId: string, paused: boolean) { this.context.automationPaused = paused; }
   async getDashboard() { return { stages: [], recentConversations: [], followup: { hot_leads: 0, eligible_leads: 0, opt_outs: 0, sent_last_30_days: 0 } }; }
   async getContactView() { return this.context; }
+  async getConversationContactId() { return this.context.contactId; }
+  async recordHumanOutbound(message: import("../../src/domain/types.js").OutboundWebhookMessage) {
+    this.outbound.push(message.content);
+    this.context.automationPaused = true;
+    this.context.workflowState = "coordinator_attending";
+    this.context.currentOwner = "coordinator";
+    return true;
+  }
+  async exportContactData() { return this.context; }
+  async deleteContactData() { return true; }
 }

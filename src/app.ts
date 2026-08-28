@@ -1,4 +1,6 @@
 import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import type { Env } from "./config/env.js";
 import { registerRoutes } from "./http/routes.js";
@@ -8,6 +10,8 @@ import { ConversationService } from "./services/conversation.service.js";
 import { EvolutionService } from "./services/evolution.service.js";
 import { OpenAIResponsesClient } from "./services/openai.service.js";
 import type { CoordinatorNotifier } from "./services/coordinator-notification.service.js";
+import type { KnowledgeEmbeddingService } from "./services/knowledge-embedding.service.js";
+import type { WebhookJobService } from "./services/webhook-job.service.js";
 
 export interface AppDependencies {
   env: Env;
@@ -17,10 +21,14 @@ export interface AppDependencies {
   openai: OpenAIResponsesClient;
   secrets: RuntimeSecretStore;
   coordinatorNotifier?: CoordinatorNotifier;
+  embeddings?: KnowledgeEmbeddingService;
+  webhookJobs?: WebhookJobService;
 }
 
 export async function buildApp(dependencies: AppDependencies) {
-  const app = Fastify({ logger: { level: dependencies.env.LOG_LEVEL }, bodyLimit: 1_048_576 });
+  const app = Fastify({ logger: { level: dependencies.env.LOG_LEVEL }, bodyLimit: 1_048_576, trustProxy: true });
+  await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(rateLimit, { max: 200, timeWindow: "1 minute" });
   const allowedOrigins = dependencies.env.ADMIN_CORS_ORIGINS
     .split(",")
     .map((origin) => origin.trim())

@@ -6,10 +6,13 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 
 - `http`: validação e exposição de rotas;
 - `services/evolution`: tradução do contrato Evolution v2;
-- `services/conversation`: orquestração IA-first e políticas incontornáveis;
+- `services/conversation`: orquestração somente IA e políticas incontornáveis;
 - `services/lead-assessment`: classificação contextual, interesse, dúvidas e objeções;
 - `services/coordinator-notification`: alerta, registro de falha e reenvio ao coordenador;
-- `services/monthly-followup`: régua limitada nos dias 15, 30 e 45;
+- `services/webhook-job`: fila PostgreSQL durável com `SKIP LOCKED` e retry;
+- `services/monthly-followup`: régua mensal limitada aos dias 30, 60 e 90;
+- `services/knowledge-embedding`: geração automática dos vetores pendentes;
+- `services/data-retention`: expurgo periódico conforme retenção configurada;
 - `services/openai`: Responses API e ciclo de tools;
 - `services/tool`: validação de argumentos e autorização de ações;
 - `repositories`: persistência e transações;
@@ -18,25 +21,25 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 ## Fluxo de mensagem
 
 1. O webhook valida o segredo opcional e normaliza o evento.
-2. Eventos que não sejam mensagens recebidas, mensagens próprias, grupos e conteúdo sem texto são ignorados.
-3. A mensagem é inserida com `UNIQUE external_message_id`.
-4. Duplicidades encerram o processamento sem gerar nova resposta.
+2. Eventos de grupo, status e conteúdo sem texto são ignorados. Mensagens próprias são classificadas como eco da automação ou intervenção humana.
+3. A mensagem entra em `webhook_jobs` com `UNIQUE external_message_id`; o webhook responde `202` sem esperar a OpenAI.
+4. Workers concorrentes usam `FOR UPDATE SKIP LOCKED`; falhas recebem retry exponencial e, após cinco tentativas, estado `failed`.
 5. Um pedido `SAIR` cancela o acompanhamento mesmo se a conversa estiver pausada.
 6. Se a conversa pertence ao coordenador ou está pausada, a IA não é chamada.
 7. O contexto recente classifica o lead e registra curso, dúvidas e objeções.
 8. Pagamento, negociação financeira, orçamento/proposta ou pedido humano/coordenador geram handoff com resumo e alerta. Perguntas, interesse e inscrição permanecem com a IA.
-9. Nos demais casos, a Responses API conduz a conversa com os chunks dos dois documentos oficiais.
+9. Nos demais casos, a Responses API conduz a conversa com chunks institucionais e referências técnicas delimitadas.
 10. Se a IA estiver indisponível, o contato recebe uma resposta temporária segura sem acionar indevidamente a coordenação.
 11. Tools são validadas por schema; a IA não pode marcar matrícula, resultado ou assumir estados humanos.
 12. A resposta é enviada pela Evolution e persistida.
 
-## Acompanhamento 15/30/45
+## Acompanhamento 30/60/90
 
-O worker consulta no máximo 25 candidatos a cada cinco minutos. Uma sequência elegível agenda contatos após 15, 30 e 45 dias, com textos distintos e sem urgência artificial. Resposta, conversão, desinteresse, encerramento, handoff, coordenador assumindo, três tentativas ou opt-out retiram o contato da fila. O recurso global fica desativado por padrão e é controlado pelo portal autenticado.
+O worker consulta no máximo 25 candidatos a cada cinco minutos. Somente leads quentes podem iniciar uma sequência em 30, 60 e 90 dias. Uma trava UUID impede dois workers de dispararem o mesmo contato. Três falhas consecutivas desativam a sequência. Resposta, conversão, desinteresse, encerramento, handoff, coordenador assumindo, três contatos ou opt-out também retiram o contato da fila.
 
 ## RAG
 
-Cada seção dos dois documentos oficiais vira um chunk. Fontes antigas são preservadas, mas ficam inativas. O vetor padrão tem 1.536 dimensões, compatível com `text-embedding-3-small`. A busca usa o maior score entre similaridade cosseno e full-text em português.
+Cada seção das fontes ativas vira um chunk. O vetor padrão tem 1.536 dimensões, compatível com `text-embedding-3-small`. A busca usa o maior score entre similaridade cosseno e full-text em português. Vetores pendentes são gerados automaticamente após salvar uma chave operacional e na inicialização.
 
 O histórico completo fica no PostgreSQL. O modelo recebe dados estruturados, estado, classificação, dúvidas, objeções, até 24 mensagens recentes e até seis chunks recuperados.
 
@@ -51,6 +54,10 @@ O histórico completo fica no PostgreSQL. O modelo recebe dados estruturados, es
 - logs de auditoria para mensagens, tags, pipeline, dados, notas e handoffs;
 - segredos somente por ambiente;
 - portal protegido por sessão assinada; chaves e telefone do coordenador são cifrados no servidor e nunca retornam ao navegador.
+- headers de segurança, CSP no portal e rate limit global e de login;
+- API sem porta pública direta; somente o proxy HTTPS acessa o contêiner;
+- exportação e exclusão de lead, minimização de payload bruto e retenção configurável;
+- backup diário PostgreSQL com retenção independente.
 
 ## Contratos externos
 

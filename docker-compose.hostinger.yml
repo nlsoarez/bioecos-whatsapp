@@ -28,7 +28,7 @@ services:
       - /bin/sh
       - -ec
       - |
-        apk add --no-cache git
+        apk add --no-cache git su-exec
         if [ ! -d /app/source/.git ]; then
           git clone --depth 1 --branch main https://github.com/nlsoarez/bioecos-whatsapp.git /app/source
         fi
@@ -36,12 +36,13 @@ services:
         npm run build
         cp -R src/db/migrations dist/src/db/migrations
         npm prune --omit=dev
-        npm run start:docker
+        chown -R node:node /app/source /app/config-data
+        exec su-exec node npm run start:docker
     depends_on:
       bioecos-postgres:
         condition: service_healthy
-    ports:
-      - "3100:3000"
+    expose:
+      - "3000"
     volumes:
       - bioecos_config_data:/app/config-data
     extra_hosts:
@@ -63,8 +64,10 @@ services:
       AUTOMATION_TIMEZONE: America/Sao_Paulo
       AUTOMATION_START_HOUR: 0
       AUTOMATION_END_HOUR: 24
-      AUTOMATION_MODE: ai-first
       FOLLOWUP_WORKER_INTERVAL_MS: 300000
+      WEBHOOK_WORKER_INTERVAL_MS: 2000
+      OPENAI_HEALTH_INTERVAL_MS: 3600000
+      DATA_RETENTION_DAYS: ${BIOECOS_DATA_RETENTION_DAYS:-365}
       AI_PROVIDER: openai
       AI_MODEL: gpt-4.1-mini
       AI_EMBEDDING_MODEL: text-embedding-3-small
@@ -85,11 +88,40 @@ services:
       - bioecos_internal
       - bioecos_edge
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  bioecos-backup:
+    image: postgres:16-alpine
+    container_name: bioecos-backup
+    restart: unless-stopped
+    depends_on:
+      bioecos-postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: bioecos-postgres
+      PGPORT: 5432
+      PGDATABASE: bioecos
+      PGUSER: bioecos
+      PGPASSWORD: ${BIOECOS_DB_PASSWORD:?Defina BIOECOS_DB_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BIOECOS_BACKUP_RETENTION_DAYS:-14}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        while true; do
+          stamp=$$(date -u +%Y%m%dT%H%M%SZ)
+          pg_dump --format=custom --file="/backups/bioecos-$${stamp}.dump"
+          find /backups -type f -name 'bioecos-*.dump' -mtime +$${BACKUP_RETENTION_DAYS} -delete
+          sleep 86400
+        done
+    volumes:
+      - bioecos_backup_data:/backups
+    networks:
+      - bioecos_internal
 
 networks:
   bioecos_internal:
@@ -103,3 +135,5 @@ volumes:
     name: bioecos_postgres_data
   bioecos_config_data:
     name: bioecos_config_data
+  bioecos_backup_data:
+    name: bioecos_backup_data

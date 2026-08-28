@@ -5,20 +5,22 @@ Backend greenfield para o atendimento da Bioecos com WhatsApp, Débora, base de 
 ## O que está implementado
 
 - webhook Evolution API v2 em `POST /webhooks/evolution`;
-- bloqueio de eventos irrelevantes, mensagens próprias, grupos e mensagens duplicadas;
+- fila durável para webhooks, com deduplicação, trava distribuída, retry exponencial e fila de falhas;
 - envio de texto pela rota Evolution v2 `POST /message/sendText/{instanceName}`;
-- modo IA-first: a OpenAI conduz a conversa usando exclusivamente os dois documentos oficiais ativos;
-- RAG híbrido: busca semântica com `pgvector` e fallback full-text em português;
+- modo somente IA: a OpenAI conduz a conversa usando a base institucional e referências técnicas aprovadas; sem IA operacional não há resposta simulada por regras;
+- RAG semântico com `pgvector` e recuperação textual complementar em português;
 - contatos, leads, conversas, mensagens, tags, pipeline, notas e auditoria;
 - qualificação contextual de lead frio, morno e quente, com histórico de mudanças, dúvidas e objeções;
 - estados explícitos de IA, espera pelo coordenador, coordenador atendendo, conversa finalizada e matrícula concluída;
-- acompanhamento opcional nos dias 15, 30 e 45, com mensagens distintas, opt-out por `SAIR` e cancelamento após resposta, conversão, desinteresse ou atendimento humano;
+- acompanhamento opcional nos dias 30, 60 e 90, exclusivo para leads quentes, com opt-out por `SAIR`, trava contra duplicidade e limite de falhas;
 - notificação automática ao coordenador, com resumo e link para o atendimento, além de falha visível e reenvio pelo portal;
 - pausa efetiva da IA após handoff ou intervenção humana;
 - seed idempotente de projeto, agente, tags, pipeline e conhecimento;
 - API administrativa mínima para dashboard, contato, pipeline e pausa;
 - painel operacional autenticado para configurar a chave OpenAI, monitorar serviços e gerar o QR Code do WhatsApp;
-- cenários de homologação do atendimento, do fallback e do webhook.
+- embeddings automáticos após cadastrar a chave e na inicialização;
+- exportação e exclusão de dados de lead, retenção configurável e backups diários;
+- cenários de homologação do atendimento, da indisponibilidade da IA e do webhook.
 
 O projeto não usa n8n.
 
@@ -28,6 +30,7 @@ O projeto não usa n8n.
 WhatsApp
   → Evolution API v2
   → POST /webhooks/evolution
+  → fila PostgreSQL
   → ConversationService
       → classificação contextual e regras de segurança
       → Débora / OpenAI Responses API (atendimento principal)
@@ -44,7 +47,7 @@ O portal técnico estático fica em `docs/` e é publicado pelo GitHub Pages dir
 
 ## Execução local
 
-Pré-requisitos: Node.js 22+, Docker com Compose e credenciais da Evolution. A chave OpenAI operacional é necessária para o atendimento automático; sem ela, a conversa é transferida com segurança.
+Pré-requisitos: Node.js 22+, Docker com Compose e credenciais da Evolution. A chave OpenAI operacional é obrigatória para o atendimento automático.
 
 ```bash
 cp .env.example .env
@@ -52,13 +55,12 @@ npm install
 docker compose up -d postgres
 npm run db:migrate
 npm run db:seed
-npm run db:embed
 npm run dev
 ```
 
 No Windows/PowerShell, copie o arquivo com `Copy-Item .env.example .env`.
 
-`db:embed` exige `OPENAI_API_KEY`. Sem embeddings, a aplicação continua com busca textual, mas isso não deve ser considerado homologação completa do RAG semântico.
+O servidor gera automaticamente os vetores pendentes quando a chave inserida no portal está operacional. `db:embed` continua disponível apenas como comando administrativo.
 
 ## Configuração obrigatória
 
@@ -78,6 +80,8 @@ O site oficial é configurado por `BIOECOS_SITE_URL` e deve permanecer como `htt
 | Método | Rota | Uso |
 |---|---|---|
 | `GET` | `/health` | backend, banco, Evolution e configuração de IA |
+| `GET` | `/live` | liveness do processo |
+| `GET` | `/ready` | prontidão de banco, webhook, IA, embeddings e fila |
 | `POST` | `/webhooks/evolution` | entrada de `MESSAGES_UPSERT` |
 | `GET` | `/admin/dashboard` | totais por etapa e conversas recentes |
 | `GET` | `/admin/contacts/:contactId` | visão consolidada e histórico |
@@ -87,6 +91,9 @@ O site oficial é configurado por `BIOECOS_SITE_URL` e deve permanecer como `htt
 | `PUT` | `/dashboard/settings/coordinator-phone` | armazena cifrado o WhatsApp do coordenador |
 | `GET` | `/dashboard/leads?filter=` | lista e filtra leads operacionais |
 | `GET` | `/dashboard/leads/:contactId` | histórico completo do lead |
+| `GET` | `/dashboard/leads/:contactId/export` | exportação LGPD do lead |
+| `DELETE` | `/dashboard/leads/:contactId` | exclusão confirmada dos dados do lead |
+| `GET` | `/dashboard/conversations/:id` | abre o atendimento pelo link da notificação |
 | `PATCH` | `/dashboard/conversations/:id/workflow` | assume, devolve, conclui ou encerra conversa |
 | `POST` | `/dashboard/notifications/:id/retry` | reenvia notificação que falhou |
 
@@ -101,7 +108,7 @@ npm run db:seed
 npm run db:embed
 ```
 
-O seed usa chaves únicas e hash de conteúdo. Ele mantém o histórico, desativa fontes antigas e deixa ativos somente os dois documentos oficiais em `config/knowledge/`. Embeddings só são recalculados para chunks sem vetor.
+O seed usa chaves únicas e hash de conteúdo. Ele mantém cinco fontes ativas em `config/knowledge/`: quatro institucionais e uma coleção técnica externa delimitada. Embeddings só são recalculados para chunks sem vetor.
 
 ## Testes
 
@@ -114,15 +121,15 @@ Os testes locais não chamam OpenAI nem Evolution. A homologação real ainda ex
 
 ## Hostinger
 
-O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado `bioecos`, com rede, volume e nomes de contêiner exclusivos. A API usa a porta externa `3100`; as portas `80`, `443` e `8080` dos serviços já instalados não são alteradas.
+O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado `bioecos`, com rede, volumes e nomes de contêiner exclusivos. A API não publica porta direta; recebe tráfego apenas pelo proxy HTTPS já ligado à rede `bioecos_edge`.
 
 O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. Por isso, a implantação usa a imagem oficial `node:22-alpine` e faz clone, instalação e build dentro do próprio contêiner isolado, sem GitHub Actions.
 
-As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI e o número do coordenador são inseridos pelo responsável dentro do dashboard e ficam cifrados no volume `bioecos_config_data`; não precisam ser gravados no Compose. Sem chave ou saldo, a IA não improvisa: a conversa é encaminhada para a coordenação.
+As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI e o número do coordenador são inseridos pelo responsável dentro do dashboard e ficam cifrados no volume `bioecos_config_data`; não precisam ser gravados no Compose. Sem chave ou crédito, o atendimento automático informa indisponibilidade temporária; não existe modo híbrido.
 
-O acompanhamento 15/30/45 nasce desativado. A ativação é feita conscientemente no portal; cada sequência só começa depois de um novo interesse elegível registrado pela automação.
+O acompanhamento 30/60/90 nasce desativado. A ativação é feita conscientemente no portal; cada sequência só começa para um lead quente elegível.
 
 ## Limites deliberados
 
-- Não há fila distribuída. O webhook é processado de forma síncrona; para alto volume, introduza uma fila durável antes de produção.
 - Preços, turmas, vagas, descontos, responsáveis e horários humanos permanecem dados operacionais pendentes.
+- A restauração do backup precisa ser ensaiada periodicamente em um banco separado; criar o arquivo não prova que ele restaura.

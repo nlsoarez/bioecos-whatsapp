@@ -8,6 +8,9 @@ import { EvolutionService } from "./services/evolution.service.js";
 import { OpenAIResponsesClient } from "./services/openai.service.js";
 import { MonthlyFollowupService } from "./services/monthly-followup.service.js";
 import { CoordinatorNotificationService } from "./services/coordinator-notification.service.js";
+import { KnowledgeEmbeddingService } from "./services/knowledge-embedding.service.js";
+import { WebhookJobService } from "./services/webhook-job.service.js";
+import { DataRetentionService } from "./services/data-retention.service.js";
 
 const env = loadEnv();
 const pool = createPool(env);
@@ -25,7 +28,10 @@ const coordinatorNotifier = new CoordinatorNotificationService(
 );
 const conversations = new ConversationService(repository, agent, evolution, coordinatorNotifier);
 const monthlyFollowup = new MonthlyFollowupService(repository, evolution);
-const app = await buildApp({ env, repository, evolution, conversations, openai: agent, secrets, coordinatorNotifier });
+const embeddings = new KnowledgeEmbeddingService(pool, agent);
+const webhookJobs = new WebhookJobService(pool, conversations, repository, evolution);
+const retention = new DataRetentionService(pool, env.DATA_RETENTION_DAYS);
+const app = await buildApp({ env, repository, evolution, conversations, openai: agent, secrets, coordinatorNotifier, embeddings, webhookJobs });
 
 const runMonthlyFollowup = async () => {
   try {
@@ -37,10 +43,22 @@ const runMonthlyFollowup = async () => {
 };
 const followupTimer = setInterval(() => void runMonthlyFollowup(), env.FOLLOWUP_WORKER_INTERVAL_MS);
 followupTimer.unref();
+const webhookTimer = setInterval(() => void webhookJobs.runOnce().catch((error) => app.log.error(error, "Falha no worker de webhooks")), env.WEBHOOK_WORKER_INTERVAL_MS);
+webhookTimer.unref();
+const aiHealthTimer = setInterval(() => void agent.testCredit().then((status) => {
+  if (status.state === "operational") return embeddings.runPending();
+  return null;
+}).catch((error) => app.log.error(error, "Falha na verificação periódica da OpenAI")), env.OPENAI_HEALTH_INTERVAL_MS);
+aiHealthTimer.unref();
+const retentionTimer = setInterval(() => void retention.runOnce().catch((error) => app.log.error(error, "Falha na retenção de dados")), 24 * 60 * 60 * 1_000);
+retentionTimer.unref();
 
 const close = async (signal: string) => {
   app.log.info({ signal }, "Encerrando aplicação");
   clearInterval(followupTimer);
+  clearInterval(webhookTimer);
+  clearInterval(aiHealthTimer);
+  clearInterval(retentionTimer);
   await app.close();
   await pool.end();
   process.exit(0);
@@ -51,6 +69,9 @@ process.on("SIGINT", () => void close("SIGINT"));
 
 await app.listen({ host: "0.0.0.0", port: env.PORT });
 setTimeout(() => void runMonthlyFollowup(), 30_000).unref();
+setTimeout(() => void webhookJobs.runOnce(), 2_000).unref();
+setTimeout(() => void agent.testCredit().then((status) => status.state === "operational" ? embeddings.runPending() : null), 5_000).unref();
+setTimeout(() => void retention.runOnce(), 60_000).unref();
 
 try {
   const webhook = await evolution.configureWebhook();

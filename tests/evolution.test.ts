@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "../src/config/env.js";
-import { EvolutionService, normalizePhone, parseEvolutionWebhook } from "../src/services/evolution.service.js";
+import { EvolutionService, normalizePhone, parseEvolutionOutboundWebhook, parseEvolutionWebhook } from "../src/services/evolution.service.js";
 
 describe("Evolution webhook v2", () => {
   it("normaliza e extrai MESSAGES_UPSERT", () => {
@@ -21,6 +21,15 @@ describe("Evolution webhook v2", () => {
   it("ignora mensagens próprias e grupos", () => {
     expect(parseEvolutionWebhook({ data: { key: { id: "1", remoteJid: "55@g.us", fromMe: false }, message: { conversation: "x" } } })).toBeNull();
     expect(parseEvolutionWebhook({ data: { key: { id: "2", remoteJid: "5521971970274@s.whatsapp.net", fromMe: true }, message: { conversation: "x" } } })).toBeNull();
+  });
+
+  it("separa mensagem própria para registrar intervenção humana", () => {
+    const result = parseEvolutionOutboundWebhook({
+      event: "messages.upsert",
+      data: { key: { id: "manual-1", remoteJid: "5521971970274@s.whatsapp.net", fromMe: true },
+        message: { conversation: "Atendimento manual" }, messageTimestamp: 1_700_000_000 },
+    });
+    expect(result).toMatchObject({ externalMessageId: "manual-1", phone: "5521971970274", content: "Atendimento manual" });
   });
 
   it("rejeita telefone inválido", () => {

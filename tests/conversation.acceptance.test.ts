@@ -142,7 +142,7 @@ describe("homologação Bioecos", () => {
     expect(s.agent.calls).toBe(1);
   });
 
-  it("14. mensagem não coberta usa a IA como fallback", async () => {
+  it("14. mensagem não coberta continua sendo respondida pela IA", async () => {
     const s = setup();
     const result = await s.service.handle(inbound("Quero entender melhor como vocês podem me orientar"));
     expect(result.response).toContain("responder diretamente");
@@ -158,21 +158,21 @@ describe("homologação Bioecos", () => {
     expect(s.sender.sent).toHaveLength(1);
   });
 
-  it("16. mantém conversa natural e agenda acompanhamento para interesse morno", async () => {
+  it("16. mantém conversa natural e não agenda acompanhamento para interesse morno", async () => {
     const s = setup();
     await s.service.handle(inbound("Vocês têm curso de aromaterapia?"));
     expect(s.repository.context.course).toBe("Aromaterapia");
     expect(s.repository.context.temperature).toBe("warm");
     expect(s.repository.context.qualificationStep).toBeNull();
-    expect(s.repository.context.followupEnabled).toBe(true);
+    expect(s.repository.context.followupEnabled).toBe(false);
     expect(s.agent.calls).toBe(1);
   });
 
-  it("17. classifica intenção explícita de matrícula como quente e mantém a IA", async () => {
+  it("17. classifica intenção explícita de matrícula como quente, mantém a IA e agenda acompanhamento mensal", async () => {
     const s = setup();
     await s.service.handle(inbound("Quero me inscrever no curso de aromaterapia"));
     expect(s.repository.context.temperature).toBe("hot");
-    expect(s.repository.context.followupEnabled).toBe(false);
+    expect(s.repository.context.followupEnabled).toBe(true);
     expect(s.repository.context.workflowState).toBe("ai_attending");
     expect(s.repository.context.automationPaused).toBe(false);
     expect(s.agent.calls).toBe(1);

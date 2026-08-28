@@ -4,7 +4,7 @@
 - [ ] Configurar `EVOLUTION_API_URL`, chave e instância.
 - [ ] Conectar e confirmar o número oficial do WhatsApp.
 - [ ] Registrar o webhook para `MESSAGES_UPSERT`.
-- [ ] Configurar OpenAI e executar `npm run db:embed`.
+- [ ] Configurar OpenAI no portal e confirmar embeddings pendentes iguais a zero em `/ready`.
 - [ ] Confirmar modelo disponível, limites e orçamento.
 - [ ] Validar calendário, preços, vagas e promoções vigentes.
 - [ ] Definir responsáveis e horários do handoff.
@@ -12,12 +12,13 @@
 - [ ] Definir SLA para conversas em `Aguardando coordenador`.
 - [ ] Aprovar política de CPF, consentimento, retenção, exclusão e anonimização.
 - [ ] Manter `INTEGRAL_GIFT_ENABLED=false` até definir conteúdo e critérios.
-- [ ] Colocar API atrás de HTTPS, firewall, rate limit e secret manager.
+- [x] Manter API sem porta direta, atrás do proxy HTTPS, com rate limit e segredos fora do Git.
 - [ ] Substituir chave administrativa estática por autenticação corporativa antes de expor painel à internet.
-- [ ] Configurar backups e teste de restauração do PostgreSQL.
+- [x] Configurar backup diário do PostgreSQL com retenção de 14 dias.
+- [ ] Executar e documentar um teste de restauração em banco separado.
 - [ ] Executar os cenários automatizados e a homologação com número real.
 - [ ] Confirmar que atendente humano pausa a IA e que a reativação é manual.
 - [ ] Homologar a coleta de lead, a classificação quente e o cancelamento por `SAIR`.
-- [ ] Aprovar o texto, a base legal e os contatos nos dias 15, 30 e 45 antes de ativar o acompanhamento no portal.
+- [ ] Aprovar o texto, a base legal e os contatos nos dias 30, 60 e 90 antes de ativar o acompanhamento no portal.
 - [ ] Testar reenvio do mesmo webhook e falhas temporárias da Evolution.
 - [ ] Revisar logs para garantir ausência de segredos e dados excessivos.
