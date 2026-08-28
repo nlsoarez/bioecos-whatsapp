@@ -789,6 +789,16 @@ export class PostgresRepository implements BioecosRepository {
       const row = target.rows[0];
       if (!row) { await client.query("ROLLBACK"); return false; }
       await this.audit(client, row.project_id, contactId, row.conversation_id, actor, "contact.deleted_lgpd", {});
+      await client.query(
+        `DELETE FROM webhook_jobs
+         WHERE external_message_id IN (
+           SELECT m.external_message_id
+           FROM messages m
+           JOIN conversations cv ON cv.id = m.conversation_id
+           WHERE cv.contact_id = $1
+         )`,
+        [contactId],
+      );
       await client.query("DELETE FROM contacts WHERE id = $1", [contactId]);
       await client.query("COMMIT");
       return true;
