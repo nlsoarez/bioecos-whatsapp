@@ -57,7 +57,8 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const aiSecret = await secrets.status("OPENAI_API_KEY");
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || aiSecret.configured;
     const aiHealth = openai.getHealthStatus();
-    const operational = database && evolutionState.reachable && webhookState.healthy && aiConfigured && aiHealth.state === "operational";
+    const operational = database && evolutionState.reachable && evolutionState.state === "open"
+      && webhookState.healthy && aiConfigured && aiHealth.state === "operational";
     return reply.code(operational ? 200 : 503).send({
       status: operational ? "operational" : "attention",
       checks: {
@@ -78,7 +79,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const aiSecret = await secrets.status("OPENAI_API_KEY");
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || aiSecret.configured;
     const aiHealth = openai.getHealthStatus();
-    const ready = database && evolutionState.reachable && webhookState.healthy && aiConfigured
+    const ready = database && evolutionState.reachable && evolutionState.state === "open" && webhookState.healthy && aiConfigured
       && aiHealth.state === "operational" && (embeddingState?.pending ?? 0) === 0 && (queueState?.failed ?? 0) === 0;
     return reply.code(ready ? 200 : 503).send({ status: ready ? "ready" : "not_ready" });
   });
