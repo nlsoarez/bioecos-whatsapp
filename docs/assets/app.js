@@ -13,7 +13,7 @@ let openedHash = "";
 
 byId("toggle-password")?.addEventListener("click", () => toggleVisibility("password", "toggle-password"));
 byId("toggle-api-key")?.addEventListener("click", () => toggleVisibility("openai-key", "toggle-api-key"));
-byId("logout-button")?.addEventListener("click", logout);
+byId("logout-button")?.addEventListener("click", () => void revokeSession());
 byId("refresh-button")?.addEventListener("click", refreshOverview);
 byId("openai-form")?.addEventListener("submit", saveOpenAIKey);
 byId("remove-api-key")?.addEventListener("click", removeOpenAIKey);
@@ -110,6 +110,18 @@ function logout() {
   dashboardView.hidden = true;
   loginView.hidden = false;
   byId("password")?.focus();
+}
+
+async function revokeSession() {
+  try {
+    if (sessionStorage.getItem(SESSION_KEY)) {
+      await api("/dashboard/auth/logout", { method: "POST" });
+    }
+  } catch {
+    // O encerramento local ainda ocorre se a API estiver indisponível.
+  } finally {
+    logout();
+  }
 }
 
 async function refreshOverview() {

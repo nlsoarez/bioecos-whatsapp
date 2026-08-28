@@ -58,7 +58,7 @@ export class EvolutionService implements MessageSender {
           return { externalMessageId: String(key?.id ?? `evolution:${Date.now()}`), raw };
         }
         if (response.status < 500 || attempt === this.env.EVOLUTION_MAX_RETRIES) {
-          throw new Error(`Evolution API respondeu ${response.status}: ${JSON.stringify(raw)}`);
+          throw new Error(`Evolution API respondeu com status ${response.status}`);
         }
         lastError = new Error(`Evolution API respondeu ${response.status}`);
       } catch (error) {
@@ -166,7 +166,7 @@ export class EvolutionService implements MessageSender {
       }),
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`Não foi possível ativar o webhook (${response.status}): ${JSON.stringify(result)}`);
+    if (!response.ok) throw new Error(`Não foi possível ativar o webhook (${response.status})`);
     return this.webhookStatus();
   }
 

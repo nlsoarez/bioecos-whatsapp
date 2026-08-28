@@ -11,6 +11,8 @@ import { CoordinatorNotificationService } from "./services/coordinator-notificat
 import { KnowledgeEmbeddingService } from "./services/knowledge-embedding.service.js";
 import { WebhookJobService } from "./services/webhook-job.service.js";
 import { DataRetentionService } from "./services/data-retention.service.js";
+import { PostgresDashboardSessionStore } from "./security/dashboard-session.store.js";
+import { PiiCipher } from "./security/pii-cipher.js";
 
 const env = loadEnv();
 const pool = createPool(env);
@@ -29,9 +31,14 @@ const coordinatorNotifier = new CoordinatorNotificationService(
 const conversations = new ConversationService(repository, agent, evolution, coordinatorNotifier);
 const monthlyFollowup = new MonthlyFollowupService(repository, evolution);
 const embeddings = new KnowledgeEmbeddingService(pool, agent);
-const webhookJobs = new WebhookJobService(pool, conversations, repository, evolution);
+const webhookJobs = new WebhookJobService(pool, conversations, repository, evolution, new PiiCipher(env.PII_ENCRYPTION_KEY));
 const retention = new DataRetentionService(pool, env.DATA_RETENTION_DAYS);
-const app = await buildApp({ env, repository, evolution, conversations, openai: agent, secrets, coordinatorNotifier, embeddings, webhookJobs });
+const dashboardSessions = new PostgresDashboardSessionStore(pool);
+await repository.migrateLegacyPii();
+const app = await buildApp({
+  env, repository, evolution, conversations, openai: agent, secrets, coordinatorNotifier, embeddings, webhookJobs,
+  dashboardSessions,
+});
 
 const runMonthlyFollowup = async () => {
   try {

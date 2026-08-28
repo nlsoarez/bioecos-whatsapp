@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+node_modules
+dist
+coverage
+data
+*.log
+*.dump
+*.dump.gpg
+docs
+tests
+!scripts/verify-backup.sh

@@ -14,10 +14,11 @@ const schema = z.object({
   DASHBOARD_USERNAME: z.string().min(3).default("admin"),
   DASHBOARD_PASSWORD: z.string().min(12).default("change-this-password"),
   DASHBOARD_SESSION_SECRET: z.string().min(32).default("change-this-session-secret-32-chars"),
-  DASHBOARD_SESSION_TTL_MINUTES: z.coerce.number().int().min(15).max(1_440).default(480),
+  DASHBOARD_SESSION_TTL_MINUTES: z.coerce.number().int().min(15).max(480).default(60),
   RUNTIME_SECRETS_PATH: z.string().min(1).default("./data/runtime-secrets.json"),
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: booleanString,
+  DATABASE_SSL_CA: z.string().default(""),
   BIOECOS_SITE_URL: z.url().default("https://www.bioecoscursos.com.br/"),
   INTEGRAL_GIFT_ENABLED: booleanString,
   AUTOMATION_TIMEZONE: z.string().default("America/Sao_Paulo"),
@@ -53,6 +54,12 @@ const schema = z.object({
   }
   if (env.DASHBOARD_SESSION_SECRET === "change-this-session-secret-32-chars") {
     context.addIssue({ code: "custom", path: ["DASHBOARD_SESSION_SECRET"], message: "DASHBOARD_SESSION_SECRET deve ser alterada em produção" });
+  }
+  for (const key of ["EVOLUTION_WEBHOOK_SECRET", "PII_ENCRYPTION_KEY", "DASHBOARD_SESSION_SECRET", "ADMIN_API_KEY"] as const) {
+    if (env[key].length < 32) context.addIssue({ code: "custom", path: [key], message: `${key} deve ter ao menos 32 caracteres em produção` });
+  }
+  if (env.DASHBOARD_PASSWORD.length < 16) {
+    context.addIssue({ code: "custom", path: ["DASHBOARD_PASSWORD"], message: "DASHBOARD_PASSWORD deve ter ao menos 16 caracteres em produção" });
   }
 });
 

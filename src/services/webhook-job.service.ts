@@ -3,6 +3,7 @@ import type { InboundMessage, OutboundWebhookMessage } from "../domain/types.js"
 import type { BioecosRepository } from "../repositories/bioecos.repository.js";
 import type { ConversationService } from "./conversation.service.js";
 import type { EvolutionService } from "./evolution.service.js";
+import type { PiiCipher } from "../security/pii-cipher.js";
 
 type JobPayload = { kind: "inbound"; message: InboundMessage } | { kind: "human_outbound"; message: OutboundWebhookMessage };
 
@@ -14,10 +15,18 @@ export class WebhookJobService {
     private readonly conversations: ConversationService,
     private readonly repository: BioecosRepository,
     private readonly evolution: EvolutionService,
+    private readonly pii?: PiiCipher,
   ) {}
 
   async enqueue(payload: JobPayload): Promise<boolean> {
     const storedPayload = { ...payload, message: { ...payload.message, raw: { source: "evolution" } } } as JobPayload;
+    if (this.pii) {
+      storedPayload.message.phone = this.pii.encrypt(storedPayload.message.phone);
+      storedPayload.message.content = this.pii.encrypt(storedPayload.message.content);
+      if ("pushName" in storedPayload.message && storedPayload.message.pushName) {
+        storedPayload.message.pushName = this.pii.encrypt(storedPayload.message.pushName);
+      }
+    }
     const result = await this.pool.query(
       `INSERT INTO webhook_jobs(external_message_id, payload) VALUES ($1, $2)
        ON CONFLICT(external_message_id) DO NOTHING RETURNING id`,
@@ -59,7 +68,7 @@ export class WebhookJobService {
       );
       for (const job of claimed.rows) {
         try {
-          const payload = normalizePayload(job.payload);
+          const payload = normalizePayload(job.payload, this.pii);
           if (payload.kind === "inbound") {
             await this.conversations.handle(payload.message);
           } else if (!this.evolution.isAutomatedOutbound(payload.message.phone, payload.message.content)) {
@@ -82,7 +91,12 @@ export class WebhookJobService {
   }
 }
 
-function normalizePayload(payload: JobPayload): JobPayload {
+function normalizePayload(payload: JobPayload, pii?: PiiCipher): JobPayload {
+  if (pii) {
+    payload.message.phone = pii.decrypt(payload.message.phone);
+    payload.message.content = pii.decrypt(payload.message.content);
+    if ("pushName" in payload.message && payload.message.pushName) payload.message.pushName = pii.decrypt(payload.message.pushName);
+  }
   payload.message.timestamp = new Date(payload.message.timestamp);
   return payload;
 }

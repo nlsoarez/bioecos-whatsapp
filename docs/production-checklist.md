@@ -13,8 +13,12 @@
 - [ ] Aprovar política de CPF, consentimento, retenção, exclusão e anonimização.
 - [ ] Manter `INTEGRAL_GIFT_ENABLED=false` até definir conteúdo e critérios.
 - [x] Manter API sem porta direta, atrás do proxy HTTPS, com rate limit e segredos fora do Git.
-- [ ] Substituir chave administrativa estática por autenticação corporativa antes de expor painel à internet.
-- [x] Configurar backup diário do PostgreSQL com retenção de 14 dias.
+- [x] Executar a API com imagem local versionada, sem clone/build na inicialização, usuário sem privilégios e filesystem somente leitura.
+- [x] Usar sessões revogáveis no servidor, expiração de 60 minutos e `Cache-Control: no-store`.
+- [ ] Substituir a autenticação local por autenticação corporativa com MFA antes de uso por vários operadores.
+- [x] Cifrar dados pessoais persistentes e usar índice HMAC para telefone.
+- [x] Configurar backup diário cifrado do PostgreSQL com retenção de 14 dias.
+- [ ] Guardar `BIOECOS_BACKUP_ENCRYPTION_KEY` fora do VPS e documentar a custódia.
 - [ ] Executar e documentar um teste de restauração em banco separado.
 - [ ] Executar os cenários automatizados e a homologação com número real.
 - [ ] Confirmar que atendente humano pausa a IA e que a reativação é manual.

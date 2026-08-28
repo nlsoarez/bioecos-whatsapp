@@ -61,6 +61,10 @@ describe("rotas do dashboard", () => {
     const overview = await app.inject({ method: "GET", url: "/dashboard/overview", headers: { authorization: `Bearer ${token}` } });
     expect(overview.statusCode).toBe(200);
     expect(overview.json().services.ai.configured).toBe(false);
+    expect(overview.headers["cache-control"]).toContain("no-store");
+    const logout = await app.inject({ method: "POST", url: "/dashboard/auth/logout", headers: { authorization: `Bearer ${token}` } });
+    expect(logout.statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/dashboard/overview", headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(401);
     await app.close();
   });
 
@@ -117,6 +121,37 @@ describe("rotas do dashboard", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ enabled: true, intervalDays: 30, maxAttempts: 3 });
+    await app.close();
+  });
+
+  it("limita força bruta, rejeita corpo excessivo e não expõe erro interno", async () => {
+    const { app } = await setup();
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/dashboard/auth/login",
+        headers: { "x-forwarded-for": "198.51.100.25" },
+        payload: { username: "operador", password: `incorreta-${attempt}` },
+      });
+      statuses.push(response.statusCode);
+    }
+    expect(statuses).not.toContain(500);
+    expect(statuses.at(-1)).toBe(429);
+
+    const invalidSchema = await app.inject({
+      method: "POST", url: "/dashboard/auth/login",
+      headers: { "x-forwarded-for": "198.51.100.26" }, payload: { username: 123, password: false },
+    });
+    expect(invalidSchema.statusCode).toBe(400);
+    expect(invalidSchema.body).not.toContain("stack");
+
+    const oversized = await app.inject({
+      method: "POST", url: "/webhooks/evolution",
+      headers: { "content-type": "application/json", "x-webhook-secret": "invalid" },
+      payload: JSON.stringify({ content: "x".repeat(1_100_000) }),
+    });
+    expect(oversized.statusCode).toBe(413);
     await app.close();
   });
 });

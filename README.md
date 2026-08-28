@@ -123,13 +123,25 @@ Os testes locais não chamam OpenAI nem Evolution. A homologação real ainda ex
 
 O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado `bioecos`, com rede, volumes e nomes de contêiner exclusivos. A API não publica porta direta; recebe tráfego apenas pelo proxy HTTPS já ligado à rede `bioecos_edge`.
 
-O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. Por isso, a implantação usa a imagem oficial `node:22-alpine` e faz clone, instalação e build dentro do próprio contêiner isolado, sem GitHub Actions.
+O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. A imagem deve ser construída manualmente no próprio VPS a partir de um commit revisado. O contêiner de produção não contém Git, não baixa a branch `main`, não instala dependências na inicialização e executa como usuário sem privilégios.
 
-As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. A chave OpenAI e o número do coordenador são inseridos pelo responsável dentro do dashboard e ficam cifrados no volume `bioecos_config_data`; não precisam ser gravados no Compose. Sem chave ou crédito, o atendimento automático informa indisponibilidade temporária; não existe modo híbrido.
+```bash
+git clone https://github.com/nlsoarez/bioecos-whatsapp.git /opt/bioecos-build
+cd /opt/bioecos-build
+git checkout --detach COMMIT_REVISADO
+docker build --pull=false --build-arg BUILD_REVISION=COMMIT_REVISADO -t bioecos-whatsapp:0.2.0-security .
+docker build --pull=false -f Dockerfile.backup -t bioecos-backup:0.2.0-security .
+```
+
+As imagens-base são fixadas por digest. O Compose usa `pull_policy: never`, filesystem somente leitura, remoção de capabilities, limite de processos, rede interna e `no-new-privileges`. A única tarefa root é o inicializador sem rede que ajusta a propriedade dos dois volumes graváveis.
+
+As variáveis `BIOECOS_*` devem ser cadastradas somente no ambiente da Hostinger. Não substitua os placeholders por segredos dentro do arquivo versionado. `BIOECOS_BACKUP_ENCRYPTION_KEY` deve ser uma chave aleatória exclusiva com pelo menos 32 caracteres e deve ser guardada fora do VPS; sem ela os backups cifrados não podem ser restaurados. A chave OpenAI e o número do coordenador são inseridos pelo responsável dentro do dashboard e ficam cifrados no volume `bioecos_config_data`; não precisam ser gravados no Compose. Sem chave ou crédito, o atendimento automático informa indisponibilidade temporária; não existe modo híbrido.
+
+Os dados pessoais persistentes são cifrados com AES-256-GCM. O telefone possui um índice HMAC separado para preservar identificação e deduplicação sem armazenar o número em texto puro. A migração de registros antigos é idempotente e ocorre antes de a API aceitar tráfego. Sessões do dashboard podem ser revogadas no servidor e expiram em 60 minutos.
 
 O acompanhamento 30/60/90 nasce desativado. A ativação é feita conscientemente no portal; cada sequência só começa para um lead quente elegível.
 
 ## Limites deliberados
 
 - Preços, turmas, vagas, descontos, responsáveis e horários humanos permanecem dados operacionais pendentes.
-- A restauração do backup precisa ser ensaiada periodicamente em um banco separado; criar o arquivo não prova que ele restaura.
+- A restauração completa precisa ser ensaiada periodicamente em um banco separado. O contêiner valida o catálogo antes de cifrar; `verify-bioecos-backup` verifica checksum, descriptografia e catálogo posteriormente.

@@ -3,7 +3,10 @@ import { z } from "zod";
 import type { Env } from "../config/env.js";
 import { PIPELINE_STAGES } from "../domain/constants.js";
 import type { BioecosRepository } from "../repositories/bioecos.repository.js";
-import { authenticateCredentials, createSessionToken, requireDashboardSession } from "../security/dashboard-auth.js";
+import {
+  authenticateCredentials, createSessionToken, dashboardUnauthorized, requireDashboardSession, secureSecretEqual,
+} from "../security/dashboard-auth.js";
+import { MemoryDashboardSessionStore, type DashboardSessionStore } from "../security/dashboard-session.store.js";
 import type { RuntimeSecretStore } from "../security/runtime-secret.store.js";
 import { ConversationService } from "../services/conversation.service.js";
 import { EvolutionService, parseEvolutionOutboundWebhook, parseEvolutionWebhook } from "../services/evolution.service.js";
@@ -23,10 +26,12 @@ interface Dependencies {
   coordinatorNotifier?: CoordinatorNotifier;
   embeddings?: KnowledgeEmbeddingService;
   webhookJobs?: WebhookJobService;
+  dashboardSessions?: DashboardSessionStore;
 }
 
 function assertAdmin(request: FastifyRequest, env: Env): void {
-  if (request.headers["x-admin-key"] !== env.ADMIN_API_KEY) {
+  const supplied = request.headers["x-admin-key"];
+  if (typeof supplied !== "string" || !secureSecretEqual(supplied, env.ADMIN_API_KEY)) {
     const error = new Error("Não autorizado") as Error & { statusCode: number };
     error.statusCode = 401;
     throw error;
@@ -36,6 +41,12 @@ function assertAdmin(request: FastifyRequest, env: Env): void {
 export async function registerRoutes(app: FastifyInstance, dependencies: Dependencies): Promise<void> {
   const { env, repository, evolution, conversations, openai, secrets } = dependencies;
   const coordinatorNotifier = dependencies.coordinatorNotifier ?? new NoopCoordinatorNotifier();
+  const dashboardSessions = dependencies.dashboardSessions ?? new MemoryDashboardSessionStore();
+  const requireSession = async (request: FastifyRequest) => {
+    const payload = requireDashboardSession(request, env);
+    if (!await dashboardSessions.isActive(payload)) throw dashboardUnauthorized();
+    return payload;
+  };
 
   app.get("/live", async () => ({ status: "ok", backend: true }));
 
@@ -49,11 +60,12 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const operational = database && evolutionState.reachable && webhookState.healthy && aiConfigured && aiHealth.state === "operational";
     return reply.code(operational ? 200 : 503).send({
       status: operational ? "operational" : "attention",
-      backend: true,
-      database,
-      evolution: { ...evolutionState, webhook: webhookState },
-      ai: { configured: aiConfigured, provider: env.AI_PROVIDER, model: env.AI_MODEL, health: aiHealth },
-      automation: { mode: "ai-only", aiRequired: true },
+      checks: {
+        database,
+        evolution: evolutionState.reachable,
+        webhook: webhookState.healthy,
+        ai: aiConfigured && aiHealth.state === "operational",
+      },
     });
   });
 
@@ -68,15 +80,13 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const aiHealth = openai.getHealthStatus();
     const ready = database && evolutionState.reachable && webhookState.healthy && aiConfigured
       && aiHealth.state === "operational" && (embeddingState?.pending ?? 0) === 0 && (queueState?.failed ?? 0) === 0;
-    return reply.code(ready ? 200 : 503).send({
-      status: ready ? "ready" : "not_ready", database,
-      evolution: evolutionState, webhook: webhookState,
-      ai: { configured: aiConfigured, ...aiHealth }, embeddings: embeddingState, queue: queueState,
-    });
+    return reply.code(ready ? 200 : 503).send({ status: ready ? "ready" : "not_ready" });
   });
 
   app.post("/webhooks/evolution", async (request, reply) => {
-    if (env.EVOLUTION_WEBHOOK_SECRET && request.headers["x-webhook-secret"] !== env.EVOLUTION_WEBHOOK_SECRET) {
+    const suppliedSecret = request.headers["x-webhook-secret"];
+    if (env.EVOLUTION_WEBHOOK_SECRET
+      && (typeof suppliedSecret !== "string" || !secureSecretEqual(suppliedSecret, env.EVOLUTION_WEBHOOK_SECRET))) {
       return reply.code(401).send({ error: "Webhook não autorizado" });
     }
     const inbound = parseEvolutionWebhook(request.body);
@@ -106,20 +116,29 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     if (!authenticateCredentials(env, credentials.username, credentials.password, clientId)) {
       return reply.code(401).send({ error: "Usuário ou senha inválidos" });
     }
+    const token = createSessionToken(env, credentials.username);
+    const session = requireDashboardSession({ headers: { authorization: `Bearer ${token}` } } as FastifyRequest, env);
+    await dashboardSessions.register(session);
     return {
-      token: createSessionToken(env, credentials.username),
+      token,
       expiresInSeconds: env.DASHBOARD_SESSION_TTL_MINUTES * 60,
       user: { username: credentials.username },
     };
   });
 
   app.get("/dashboard/auth/session", async (request) => {
-    const session = requireDashboardSession(request, env);
+    const session = await requireSession(request);
     return { authenticated: true, user: { username: session.sub }, expiresAt: new Date(session.exp).toISOString() };
   });
 
+  app.post("/dashboard/auth/logout", async (request, reply) => {
+    const session = await requireSession(request);
+    await dashboardSessions.revoke(session);
+    return reply.code(204).send();
+  });
+
   app.get("/dashboard/overview", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const [database, evolutionState, webhookState, ai, coordinator, dashboard, followupSettings, embeddings, queue] = await Promise.all([
       repository.health().catch(() => false),
       evolution.connectionState(),
@@ -151,7 +170,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   });
 
   app.put("/dashboard/settings/openai-key", async (request, reply) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const { apiKey } = z.object({ apiKey: z.string().min(20).max(500) }).parse(request.body);
     try {
       await openai.validateApiKey(apiKey);
@@ -167,26 +186,26 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   });
 
   app.post("/dashboard/openai/test", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const aiConfigured = Boolean(env.OPENAI_API_KEY) || (await secrets.status("OPENAI_API_KEY")).configured;
     if (!aiConfigured) throw httpError(409, "Configure a chave OpenAI antes de testar o crédito");
     return openai.testCredit();
   });
 
   app.delete("/dashboard/settings/openai-key", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     await secrets.delete("OPENAI_API_KEY");
     return { configured: false };
   });
 
   app.put("/dashboard/settings/monthly-followup", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const { enabled } = z.object({ enabled: z.boolean() }).parse(request.body);
     return repository.setMonthlyFollowupEnabled(enabled);
   });
 
   app.put("/dashboard/settings/coordinator-phone", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const { phone } = z.object({ phone: z.string().min(10).max(30) }).parse(request.body);
     const digits = phone.replace(/\D/g, "");
     if (digits.length < 10 || digits.length > 15) throw httpError(400, "Número do coordenador inválido");
@@ -195,32 +214,32 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   });
 
   app.delete("/dashboard/settings/coordinator-phone", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     await secrets.delete("COORDINATOR_WHATSAPP");
     return { configured: false };
   });
 
   app.get("/dashboard/leads", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const { filter } = z.object({ filter: z.string().max(50).default("all") }).parse(request.query);
     return { leads: await repository.getLeads(filter) };
   });
 
   app.get<{ Params: { contactId: string } }>("/dashboard/leads/:contactId", async (request, reply) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const lead = await repository.getContactView(request.params.contactId);
     return lead ? { lead } : reply.code(404).send({ error: "Lead não encontrado" });
   });
 
   app.get<{ Params: { conversationId: string } }>("/dashboard/conversations/:conversationId", async (request, reply) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const contactId = await repository.getConversationContactId(request.params.conversationId);
     if (!contactId) return reply.code(404).send({ error: "Conversa não encontrada" });
     return { lead: await repository.getContactView(contactId) };
   });
 
   app.get<{ Params: { contactId: string } }>("/dashboard/leads/:contactId/export", async (request, reply) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const data = await repository.exportContactData(request.params.contactId);
     if (!data) return reply.code(404).send({ error: "Lead não encontrado" });
     reply.header("content-disposition", `attachment; filename=lead-${request.params.contactId}.json`);
@@ -228,7 +247,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   });
 
   app.delete<{ Params: { contactId: string } }>("/dashboard/leads/:contactId", async (request, reply) => {
-    const session = requireDashboardSession(request, env);
+    const session = await requireSession(request);
     const values = z.object({ confirm: z.literal("EXCLUIR") }).parse(request.body);
     void values;
     const deleted = await repository.deleteContactData(request.params.contactId, `dashboard:${session.sub}`);
@@ -236,7 +255,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   });
 
   app.patch<{ Params: { conversationId: string } }>("/dashboard/conversations/:conversationId/workflow", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     const values = z.object({
       state: z.enum(["ai_attending", "awaiting_coordinator", "coordinator_attending", "conversation_finished", "enrollment_completed", "not_interested"]),
       reason: z.string().min(2).max(500),
@@ -247,33 +266,33 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   });
 
   app.get("/dashboard/notifications/failed", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     return { notifications: await repository.getFailedCoordinatorNotifications(50) };
   });
 
   app.post<{ Params: { id: string } }>("/dashboard/notifications/:id/retry", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     return coordinatorNotifier.retry(request.params.id);
   });
 
   app.post("/dashboard/webhooks/retry-failed", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     if (!dependencies.webhookJobs) return { retried: 0 };
     return { retried: await dependencies.webhookJobs.retryFailed() };
   });
 
   app.get("/dashboard/whatsapp", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     return evolution.connectionState();
   });
 
   app.post("/dashboard/whatsapp/connect", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     return evolution.connect();
   });
 
   app.post("/dashboard/whatsapp/webhook", async (request) => {
-    requireDashboardSession(request, env);
+    await requireSession(request);
     return evolution.configureWebhook();
   });
 

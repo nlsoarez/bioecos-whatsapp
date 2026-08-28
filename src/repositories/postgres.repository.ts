@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { createCipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { ALLOWED_TAGS, PIPELINE_STAGES, type AllowedTag, type PipelineStage } from "../domain/constants.js";
 import type {
   ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
@@ -8,11 +8,100 @@ import type {
   OutboundWebhookMessage,
 } from "../domain/types.js";
 import type { BioecosRepository, ContactUpdate } from "./bioecos.repository.js";
+import { PiiCipher } from "../security/pii-cipher.js";
 
 type Queryable = Pick<pg.Pool | pg.PoolClient, "query">;
 
 export class PostgresRepository implements BioecosRepository {
-  constructor(private readonly pool: pg.Pool, private readonly piiEncryptionKey = "") {}
+  private readonly pii: PiiCipher;
+
+  constructor(private readonly pool: pg.Pool, piiEncryptionKey: string) {
+    this.pii = new PiiCipher(piiEncryptionKey);
+  }
+
+  async migrateLegacyPii(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('bioecos-pii-migration-v2'))");
+
+      const contacts = await client.query<Record<string, string | null>>(
+        "SELECT id, phone, name, email, city, state, cpf, company_name, profession FROM contacts FOR UPDATE",
+      );
+      for (const row of contacts.rows) {
+        await client.query(
+          `UPDATE contacts SET phone = $2, phone_hash = $3, name = $4, email = $5, city = $6, state = $7,
+           cpf = $8, company_name = $9, profession = $10 WHERE id = $1`,
+          [row.id, this.pii.encrypt(row.phone!), this.pii.phoneHash(this.pii.decrypt(row.phone!)),
+            this.pii.encryptNullable(row.name), this.pii.encryptNullable(row.email), this.pii.encryptNullable(row.city),
+            this.pii.encryptNullable(row.state), this.pii.encryptNullable(row.cpf), this.pii.encryptNullable(row.company_name),
+            this.pii.encryptNullable(row.profession)],
+        );
+      }
+
+      const leads = await client.query<Record<string, unknown>>(
+        `SELECT id, area, interest, service, course, objective, notes, assigned_to, followup_last_error, outcome,
+         main_questions, objections FROM leads FOR UPDATE`,
+      );
+      for (const row of leads.rows) {
+        const encryptArray = (value: unknown) => Array.isArray(value)
+          ? value.map((item) => typeof item === "string" ? this.pii.encrypt(item) : item)
+          : [];
+        await client.query(
+          `UPDATE leads SET area = $2, interest = $3, service = $4, course = $5, objective = $6, notes = $7,
+           assigned_to = $8, followup_last_error = $9, outcome = $10, main_questions = $11, objections = $12
+           WHERE id = $1`,
+          [row.id, this.pii.encryptNullable(row.area as string | null), this.pii.encryptNullable(row.interest as string | null),
+            this.pii.encryptNullable(row.service as string | null), this.pii.encryptNullable(row.course as string | null),
+            this.pii.encryptNullable(row.objective as string | null), this.pii.encryptNullable(row.notes as string | null),
+            this.pii.encryptNullable(row.assigned_to as string | null), this.pii.encryptNullable(row.followup_last_error as string | null),
+            this.pii.encryptNullable(row.outcome as string | null), JSON.stringify(encryptArray(row.main_questions)),
+            JSON.stringify(encryptArray(row.objections))],
+        );
+      }
+
+      for (const descriptor of [
+        { table: "conversations", fields: ["summary", "handoff_reason"] },
+        { table: "messages", fields: ["content"] },
+        { table: "coordinator_notifications", fields: ["message", "last_error"] },
+        { table: "followup_events", fields: ["content", "error"] },
+        { table: "lead_temperature_history", fields: ["reason"] },
+      ] as const) {
+        const rows = await client.query<Record<string, string | null>>(
+          `SELECT id, ${descriptor.fields.join(", ")} FROM ${descriptor.table} FOR UPDATE`,
+        );
+        for (const row of rows.rows) {
+          const assignments = descriptor.fields.map((field, index) => `${field} = $${index + 2}`).join(", ");
+          await client.query(
+            `UPDATE ${descriptor.table} SET ${assignments} WHERE id = $1`,
+            [row.id, ...descriptor.fields.map((field) => this.pii.encryptNullable(row[field]))],
+          );
+        }
+      }
+
+      const jobs = await client.query<{ id: string; payload: Record<string, unknown> }>("SELECT id, payload FROM webhook_jobs FOR UPDATE");
+      for (const job of jobs.rows) {
+        const message = job.payload.message as Record<string, unknown> | undefined;
+        if (!message) continue;
+        for (const field of ["phone", "pushName", "content"] as const) {
+          if (typeof message[field] === "string") message[field] = this.pii.encrypt(message[field]);
+        }
+        await client.query("UPDATE webhook_jobs SET payload = $2 WHERE id = $1", [job.id, JSON.stringify(job.payload)]);
+      }
+
+      await client.query(
+        `UPDATE audit_logs SET details = '{"redacted":true}'::jsonb
+         WHERE action IN ('note.added', 'handoff.created', 'lead.assessed', 'pipeline.moved',
+           'followup.cancelled', 'conversation.workflow_changed') AND details <> '{"redacted":true}'::jsonb`,
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 
   async health(): Promise<boolean> {
     await this.pool.query("SELECT 1");
@@ -27,13 +116,26 @@ export class PostgresRepository implements BioecosRepository {
       if (!project.rows[0]) throw new Error("Projeto Bioecos não importado. Execute db:seed.");
       const projectId = project.rows[0].id;
 
-      const contactResult = await client.query<{ id: string }>(
-        `INSERT INTO contacts(project_id, phone, name, source) VALUES ($1, $2, $3, 'whatsapp')
-         ON CONFLICT(project_id, phone) DO UPDATE SET
-           name = coalesce(contacts.name, excluded.name), updated_at = now()
-         RETURNING id`,
-        [projectId, message.phone, message.pushName],
+      const phoneHash = this.pii.phoneHash(message.phone);
+      const existingContact = await client.query<{ id: string }>(
+        `SELECT id FROM contacts WHERE project_id = $1 AND (phone_hash = $2 OR phone = $3)
+         LIMIT 1 FOR UPDATE`,
+        [projectId, phoneHash, message.phone],
       );
+      const contactResult = existingContact.rows[0]
+        ? await client.query<{ id: string }>(
+          `UPDATE contacts SET phone = $2, phone_hash = $3,
+           name = coalesce(name, $4), updated_at = now() WHERE id = $1 RETURNING id`,
+          [existingContact.rows[0].id, this.pii.encrypt(message.phone), phoneHash, this.pii.encryptNullable(message.pushName)],
+        )
+        : await client.query<{ id: string }>(
+          `INSERT INTO contacts(project_id, phone, phone_hash, name, source)
+           VALUES ($1, $2, $3, $4, 'whatsapp')
+           ON CONFLICT(project_id, phone_hash) WHERE phone_hash IS NOT NULL DO UPDATE SET
+             name = coalesce(contacts.name, excluded.name), updated_at = now()
+           RETURNING id`,
+          [projectId, this.pii.encrypt(message.phone), phoneHash, this.pii.encryptNullable(message.pushName)],
+        );
       const contactId = contactResult.rows[0]!.id;
 
       const newStage = await client.query<{ id: string }>(
@@ -58,7 +160,7 @@ export class PostgresRepository implements BioecosRepository {
       const inserted = await client.query(
         `INSERT INTO messages(conversation_id, external_message_id, direction, content, timestamp, metadata)
          VALUES ($1, $2, 'inbound', $3, $4, $5) ON CONFLICT(external_message_id) DO NOTHING RETURNING id`,
-        [conversationId, message.externalMessageId, message.content, message.timestamp, JSON.stringify({ source: "evolution" })],
+        [conversationId, message.externalMessageId, this.pii.encrypt(message.content), message.timestamp, JSON.stringify({ source: "evolution" })],
       );
       const duplicate = inserted.rowCount === 0;
       if (!duplicate) {
@@ -87,7 +189,7 @@ export class PostgresRepository implements BioecosRepository {
        ORDER BY timestamp DESC LIMIT $2`,
       [conversationId, limit],
     );
-    return result.rows.reverse();
+    return result.rows.reverse().map((row) => ({ ...row, content: this.pii.decrypt(row.content) }));
   }
 
   async getContext(conversationId: string): Promise<ContactContext> {
@@ -150,11 +252,18 @@ export class PostgresRepository implements BioecosRepository {
        WHERE l.id = $1 AND c.id = l.contact_id AND ps.name = $2`,
       [context.leadId, stage],
     );
-    await this.auditForContext(context, "agent", "pipeline.moved", { from: context.pipelineStage, to: stage, reason });
+    await this.auditForContext(context, "agent", "pipeline.moved", { from: context.pipelineStage, to: stage, reason: "recorded" });
   }
 
   async updateContact(context: ContactContext, values: ContactUpdate): Promise<void> {
-    if (values.cpf) values = { ...values, cpf: this.encryptCpf(values.cpf) };
+    const sensitiveFields = new Set([
+      "name", "email", "city", "state", "cpf", "companyName", "profession",
+      "area", "interest", "service", "course", "objective",
+    ]);
+    values = Object.fromEntries(Object.entries(values).map(([key, value]) => [
+      key,
+      typeof value === "string" && sensitiveFields.has(key) ? this.pii.encrypt(value) : value,
+    ])) as ContactUpdate;
     const contactFields: Record<string, string> = {
       name: "name", email: "email", city: "city", state: "state", cpf: "cpf",
       companyName: "company_name", profession: "profession", source: "source",
@@ -209,17 +318,26 @@ export class PostgresRepository implements BioecosRepository {
           course = coalesce($5, course), interest = coalesce($6, interest),
           enrollment_status = CASE WHEN $7 THEN 'not_interested' ELSE enrollment_status END,
           updated_at = now() WHERE id = $1`,
-        [context.leadId, temperature, JSON.stringify(assessment.mainQuestions), JSON.stringify(assessment.objections),
-          assessment.course, assessment.interest, assessment.notInterested],
+        [context.leadId, temperature,
+          JSON.stringify(assessment.mainQuestions.map((value) => this.pii.encrypt(value))),
+          JSON.stringify(assessment.objections.map((value) => this.pii.encrypt(value))),
+          this.pii.encryptNullable(assessment.course), this.pii.encryptNullable(assessment.interest), assessment.notInterested],
       );
       if (temperature !== previous) {
         await client.query(
           "INSERT INTO lead_temperature_history(lead_id, from_temperature, to_temperature, reason) VALUES ($1, $2, $3, $4)",
-          [context.leadId, previous, temperature, assessment.reason],
+          [context.leadId, previous, temperature, this.pii.encrypt(assessment.reason)],
         );
       }
       await client.query("COMMIT");
-      await this.auditForContext(context, "automation", "lead.assessed", assessment);
+      await this.auditForContext(context, "automation", "lead.assessed", {
+        temperature: assessment.temperature,
+        questionCount: assessment.mainQuestions.length,
+        objectionCount: assessment.objections.length,
+        hasCourse: Boolean(assessment.course),
+        shouldHandoff: assessment.shouldHandoff,
+        notInterested: assessment.notInterested,
+      });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -245,7 +363,7 @@ export class PostgresRepository implements BioecosRepository {
       "UPDATE leads SET followup_enabled = false, followup_next_at = null, updated_at = now() WHERE id = $1",
       [context.leadId],
     );
-    await this.auditForContext(context, "automation", "followup.cancelled", { reason });
+    await this.auditForContext(context, "automation", "followup.cancelled", { reason: "recorded" });
   }
 
   async optOutMonthlyFollowup(context: ContactContext): Promise<void> {
@@ -320,7 +438,7 @@ export class PostgresRepository implements BioecosRepository {
     );
     return result.rows.map((row) => ({
       leadId: row.lead_id, contactId: row.contact_id, conversationId: row.conversation_id,
-      phone: row.phone, name: row.name, course: row.course, attempts: row.attempts,
+      phone: this.pii.decrypt(row.phone), name: this.pii.decryptNullable(row.name), course: this.pii.decrypt(row.course), attempts: row.attempts,
       step: Math.min(3, row.attempts + 1) as 1 | 2 | 3, sequenceId: row.sequence_id,
       lockToken: row.lock_token,
     }));
@@ -338,10 +456,10 @@ export class PostgresRepository implements BioecosRepository {
     await this.pool.query(
       `INSERT INTO followup_events(lead_id, conversation_id, sequence_id, step, status, content)
        VALUES ($1, $2, $3, $4, 'sent', $5)`,
-      [candidate.leadId, candidate.conversationId, candidate.sequenceId, candidate.step, content],
+      [candidate.leadId, candidate.conversationId, candidate.sequenceId, candidate.step, this.pii.encrypt(content)],
     );
     const context = await this.getContext(candidate.conversationId);
-    await this.auditForContext(context, "automation", "followup.sent", { attempt: candidate.attempts + 1, course: candidate.course });
+    await this.auditForContext(context, "automation", "followup.sent", { attempt: candidate.attempts + 1, hasCourse: true });
   }
 
   async markMonthlyFollowupFailed(candidate: MonthlyFollowupCandidate, error: string): Promise<void> {
@@ -352,41 +470,45 @@ export class PostgresRepository implements BioecosRepository {
        followup_next_at = CASE WHEN followup_failure_attempts + 1 >= 3 THEN null ELSE now() + interval '1 day' END,
        followup_locked_at = null, followup_lock_token = null, updated_at = now()
        WHERE id = $1 AND ($3::uuid IS NULL OR followup_lock_token = $3::uuid)`,
-      [candidate.leadId, error.slice(0, 500), candidate.lockToken ?? null],
+      [candidate.leadId, this.pii.encrypt(error.slice(0, 500)), candidate.lockToken ?? null],
     );
     await this.pool.query(
       `INSERT INTO followup_events(lead_id, conversation_id, sequence_id, step, status, error)
        VALUES ($1, $2, $3, $4, 'failed', $5)`,
-      [candidate.leadId, candidate.conversationId, candidate.sequenceId, candidate.step, error.slice(0, 500)],
+      [candidate.leadId, candidate.conversationId, candidate.sequenceId, candidate.step, this.pii.encrypt(error.slice(0, 500))],
     );
     const context = await this.getContext(candidate.conversationId);
-    await this.auditForContext(context, "automation", "followup.failed", { error: error.slice(0, 500) });
+    await this.auditForContext(context, "automation", "followup.failed", { error: "recorded" });
   }
 
   async addNote(context: ContactContext, note: string): Promise<void> {
-    await this.pool.query(
-      "UPDATE leads SET notes = concat_ws(E'\\n', nullif(notes, ''), $2::text), updated_at = now() WHERE id = $1",
-      [context.leadId, note],
-    );
-    await this.auditForContext(context, "agent", "note.added", { note });
+    const current = await this.pool.query<{ notes: string | null }>("SELECT notes FROM leads WHERE id = $1", [context.leadId]);
+    const previous = this.pii.decryptNullable(current.rows[0]?.notes) ?? "";
+    await this.pool.query("UPDATE leads SET notes = $2, updated_at = now() WHERE id = $1", [
+      context.leadId,
+      this.pii.encrypt([previous, note].filter(Boolean).join("\n")),
+    ]);
+    await this.auditForContext(context, "agent", "note.added", { fields: ["notes"] });
   }
 
   async handoff(context: ContactContext, reason: string, summary: string): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const existing = await client.query<{ notes: string | null }>("SELECT notes FROM leads WHERE id = $1 FOR UPDATE", [context.leadId]);
+      const handoffNote = [this.pii.decryptNullable(existing.rows[0]?.notes) ?? "", `Handoff: ${reason}`].filter(Boolean).join("\n");
       await client.query(
         `UPDATE conversations SET automation_paused = true, summary = $2, workflow_state = 'awaiting_coordinator',
          current_owner = 'coordinator', handoff_reason = $3, coordinator_notification_status = 'pending'
          WHERE id = $1`,
-        [context.conversationId, summary, reason],
+        [context.conversationId, this.pii.encrypt(summary), this.pii.encrypt(reason)],
       );
       await client.query(
-        `UPDATE leads l SET pipeline_stage_id = ps.id, notes = concat_ws(E'\\n', nullif(l.notes, ''), $2::text),
+        `UPDATE leads l SET pipeline_stage_id = ps.id, notes = $2,
          followup_enabled = false, followup_next_at = null, updated_at = now()
          FROM pipeline_stages ps JOIN contacts c ON c.project_id = ps.project_id
          WHERE l.id = $1 AND c.id = l.contact_id AND ps.name = 'Aguardando coordenador'`,
-        [context.leadId, `Handoff: ${reason}`],
+        [context.leadId, this.pii.encrypt(handoffNote)],
       );
       await client.query(
         `INSERT INTO contact_tags(contact_id, tag_id)
@@ -395,7 +517,7 @@ export class PostgresRepository implements BioecosRepository {
         [context.contactId],
       );
       const project = await client.query<{ project_id: string }>("SELECT project_id FROM contacts WHERE id = $1", [context.contactId]);
-      await this.audit(client, project.rows[0]!.project_id, context.contactId, context.conversationId, "agent", "handoff.created", { reason, summary });
+      await this.audit(client, project.rows[0]!.project_id, context.contactId, context.conversationId, "agent", "handoff.created", { reason: "recorded", summary: "recorded" });
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -409,7 +531,7 @@ export class PostgresRepository implements BioecosRepository {
     const result = await this.pool.query<{ id: string }>(
       `INSERT INTO coordinator_notifications(contact_id, conversation_id, message)
        VALUES ($1, $2, $3) RETURNING id`,
-      [context.contactId, context.conversationId, message],
+      [context.contactId, context.conversationId, this.pii.encrypt(message)],
     );
     return result.rows[0]!.id;
   }
@@ -421,14 +543,15 @@ export class PostgresRepository implements BioecosRepository {
     }>("SELECT id, contact_id, conversation_id, message, status, attempts, last_error FROM coordinator_notifications WHERE id = $1", [id]);
     const row = result.rows[0];
     return row ? { id: row.id, contactId: row.contact_id, conversationId: row.conversation_id,
-      message: row.message, status: row.status, attempts: row.attempts, lastError: row.last_error } : null;
+      message: this.pii.decrypt(row.message), status: row.status, attempts: row.attempts,
+      lastError: this.pii.decryptNullable(row.last_error) } : null;
   }
 
   async markCoordinatorNotification(id: string, status: "sent" | "failed", error?: string): Promise<void> {
     await this.pool.query(
       `UPDATE coordinator_notifications SET status = $2, attempts = attempts + 1, last_error = $3,
        sent_at = CASE WHEN $2 = 'sent' THEN now() ELSE sent_at END, updated_at = now() WHERE id = $1`,
-      [id, status, error?.slice(0, 500) ?? null],
+      [id, status, error ? this.pii.encrypt(error.slice(0, 500)) : null],
     );
     await this.pool.query(
       `UPDATE conversations SET coordinator_notification_status = $2
@@ -447,7 +570,8 @@ export class PostgresRepository implements BioecosRepository {
       [Math.max(1, Math.min(limit, 100))],
     );
     return result.rows.map((row) => ({ id: row.id, contactId: row.contact_id, conversationId: row.conversation_id,
-      message: row.message, status: row.status, attempts: row.attempts, lastError: row.last_error }));
+      message: this.pii.decrypt(row.message), status: row.status, attempts: row.attempts,
+      lastError: this.pii.decryptNullable(row.last_error) }));
   }
 
   async setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string): Promise<void> {
@@ -475,10 +599,10 @@ export class PostgresRepository implements BioecosRepository {
          updated_at = now()
          FROM pipeline_stages ps JOIN contacts c ON c.project_id = ps.project_id
          WHERE l.id = $1 AND c.id = l.contact_id AND ps.name = $2`,
-        [context.leadId, stage, paused, state, reason],
+        [context.leadId, stage, paused, state, this.pii.encrypt(reason)],
       );
       await client.query("COMMIT");
-      await this.auditForContext(context, owner, "conversation.workflow_changed", { state, owner, reason });
+      await this.auditForContext(context, owner, "conversation.workflow_changed", { state, owner, reason: "recorded" });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -507,14 +631,15 @@ export class PostgresRepository implements BioecosRepository {
        CASE WHEN cv.workflow_state = 'awaiting_coordinator' THEN 0 WHEN l.temperature = 'hot' THEN 1 ELSE 2 END,
        cv.last_interaction_at DESC LIMIT 500`,
     );
-    return result.rows;
+    return result.rows.map((row) => this.decryptFields(row, ["name", "phone", "course"]));
   }
 
   async saveOutbound(conversationId: string, externalMessageId: string, content: string, metadata: unknown): Promise<void> {
+    void metadata;
     await this.pool.query(
       `INSERT INTO messages(conversation_id, external_message_id, direction, content, timestamp, metadata)
        VALUES ($1, $2, 'outbound', $3, now(), $4) ON CONFLICT(external_message_id) DO NOTHING`,
-      [conversationId, externalMessageId || `outbound:${randomUUID()}`, content, JSON.stringify(metadata)],
+      [conversationId, externalMessageId || `outbound:${randomUUID()}`, this.pii.encrypt(content), JSON.stringify({ source: "automation" })],
     );
   }
 
@@ -550,7 +675,7 @@ export class PostgresRepository implements BioecosRepository {
     const failedNotifications = await this.pool.query(
       "SELECT count(*)::int AS total FROM coordinator_notifications WHERE status = 'failed'",
     );
-    return { stages: stages.rows, recentConversations: conversations.rows, followup: followup.rows[0],
+    return { stages: stages.rows, recentConversations: conversations.rows.map((row) => this.decryptFields(row, ["name", "phone"])), followup: followup.rows[0],
       failedCoordinatorNotifications: failedNotifications.rows[0]?.total ?? 0 };
   }
 
@@ -586,7 +711,23 @@ export class PostgresRepository implements BioecosRepository {
       "SELECT step, status, content, error, created_at FROM followup_events WHERE lead_id = (SELECT id FROM leads WHERE contact_id = $1) ORDER BY created_at DESC",
       [contactId],
     );
-    return { ...contact.rows[0], history: history.rows, temperatureHistory: temperatures.rows, followupHistory: followups.rows };
+    const decryptedContact = this.decryptFields(contact.rows[0], [
+      "phone", "name", "email", "city", "state", "company_name", "profession", "area", "interest",
+      "service", "course", "objective", "notes", "assigned_to", "followup_last_error", "outcome",
+      "handoff_reason", "summary",
+    ]);
+    return {
+      ...decryptedContact,
+      main_questions: Array.isArray(contact.rows[0].main_questions)
+        ? contact.rows[0].main_questions.map((value: unknown) => typeof value === "string" ? this.pii.decrypt(value) : value)
+        : [],
+      objections: Array.isArray(contact.rows[0].objections)
+        ? contact.rows[0].objections.map((value: unknown) => typeof value === "string" ? this.pii.decrypt(value) : value)
+        : [],
+      history: history.rows.map((row) => this.decryptFields(row, ["content"])),
+      temperatureHistory: temperatures.rows.map((row) => this.decryptFields(row, ["reason"])),
+      followupHistory: followups.rows.map((row) => this.decryptFields(row, ["content", "error"])),
+    };
   }
 
   async getConversationContactId(conversationId: string): Promise<string | null> {
@@ -601,8 +742,9 @@ export class PostgresRepository implements BioecosRepository {
       const target = await client.query<{ conversation_id: string; contact_id: string; project_id: string }>(
         `SELECT cv.id AS conversation_id, c.id AS contact_id, c.project_id
          FROM contacts c JOIN conversations cv ON cv.contact_id = c.id AND cv.status = 'open'
-         JOIN projects p ON p.id = c.project_id AND p.slug = 'bioecos' WHERE c.phone = $1 LIMIT 1`,
-        [message.phone],
+         JOIN projects p ON p.id = c.project_id AND p.slug = 'bioecos'
+         WHERE c.phone_hash = $1 OR c.phone = $2 LIMIT 1`,
+        [this.pii.phoneHash(message.phone), message.phone],
       );
       const row = target.rows[0];
       if (!row) { await client.query("ROLLBACK"); return false; }
@@ -610,7 +752,7 @@ export class PostgresRepository implements BioecosRepository {
         `INSERT INTO messages(conversation_id, external_message_id, direction, content, timestamp, metadata)
          VALUES ($1, $2, 'outbound', $3, $4, '{"source":"coordinator_whatsapp"}'::jsonb)
          ON CONFLICT(external_message_id) DO NOTHING RETURNING id`,
-        [row.conversation_id, message.externalMessageId, message.content, message.timestamp],
+        [row.conversation_id, message.externalMessageId, this.pii.encrypt(message.content), message.timestamp],
       );
       if (inserted.rowCount === 0) { await client.query("COMMIT"); return false; }
       await client.query(
@@ -684,15 +826,18 @@ export class PostgresRepository implements BioecosRepository {
     const row = result.rows[0];
     if (!row) throw new Error("Contexto não encontrado");
     return {
-      contactId, conversationId, leadId, phone: row.phone, name: row.name, email: row.email,
-      city: row.city, companyName: row.company_name, area: row.area, interest: row.interest,
-      service: row.service, course: row.course, objective: row.objective,
+      contactId, conversationId, leadId, phone: this.pii.decrypt(row.phone), name: this.pii.decryptNullable(row.name),
+      email: this.pii.decryptNullable(row.email), city: this.pii.decryptNullable(row.city),
+      companyName: this.pii.decryptNullable(row.company_name), area: this.pii.decryptNullable(row.area),
+      interest: this.pii.decryptNullable(row.interest), service: this.pii.decryptNullable(row.service),
+      course: this.pii.decryptNullable(row.course), objective: this.pii.decryptNullable(row.objective),
       pipelineStage: row.pipeline_stage, tags: row.tags, automationPaused: row.automation_paused,
       qualificationStep: row.qualification_step, temperature: row.temperature,
       followupEnabled: row.followup_enabled, followupOptOut: row.followup_opt_out,
-      workflowState: row.workflow_state, currentOwner: row.current_owner, handoffReason: row.handoff_reason,
+      workflowState: row.workflow_state, currentOwner: row.current_owner, handoffReason: this.pii.decryptNullable(row.handoff_reason),
       coordinatorNotificationStatus: row.coordinator_notification_status,
-      mainQuestions: row.main_questions, objections: row.objections, enrollmentStatus: row.enrollment_status,
+      mainQuestions: row.main_questions.map((value) => this.pii.decrypt(value)),
+      objections: row.objections.map((value) => this.pii.decrypt(value)), enrollmentStatus: row.enrollment_status,
       followupNextAt: row.followup_next_at, followupAttempts: row.followup_attempts,
     };
   }
@@ -705,14 +850,13 @@ export class PostgresRepository implements BioecosRepository {
     await this.pool.query(`UPDATE ${table} SET ${assignments.join(", ")}, updated_at = now() WHERE ${idColumn} = $1`, parameters);
   }
 
-  private encryptCpf(cpf: string): string {
-    if (!this.piiEncryptionKey) throw new Error("PII_ENCRYPTION_KEY não configurada; CPF não foi armazenado");
-    const key = createHash("sha256").update(this.piiEncryptionKey).digest();
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", key, iv);
-    const encrypted = Buffer.concat([cipher.update(cpf, "utf8"), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    return `v1:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+  private decryptFields<T extends Record<string, unknown>>(row: T, fields: string[]): T {
+    const copy = { ...row };
+    for (const field of fields) {
+      const value = copy[field];
+      if (typeof value === "string") copy[field as keyof T] = this.pii.decrypt(value) as T[keyof T];
+    }
+    return copy;
   }
 
   private async auditForContext(context: ContactContext, actor: string, action: string, details: unknown): Promise<void> {

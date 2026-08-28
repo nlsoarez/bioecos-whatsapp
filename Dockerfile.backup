@@ -1,0 +1,4 @@
+FROM postgres:16.14-alpine3.22@sha256:786dab398303b8ce7cb76b407bb21ef2e4dfbbbd4c6abcf3d29b3130467ffdbc
+RUN apk add --no-cache gnupg
+COPY --chmod=0555 scripts/verify-backup.sh /usr/local/bin/verify-bioecos-backup
+USER postgres

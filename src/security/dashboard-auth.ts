@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import type { FastifyRequest } from "fastify";
 import type { Env } from "../config/env.js";
 
-interface SessionPayload {
+export interface SessionPayload {
   exp: number;
   sub: string;
   nonce: string;
@@ -18,7 +18,7 @@ export function authenticateCredentials(env: Env, username: string, password: st
   if (attempts && attempts.resetAt > now && attempts.count >= MAX_ATTEMPTS) return false;
   if (attempts && attempts.resetAt <= now) failedLogins.delete(clientId);
 
-  const valid = secureEqual(username, env.DASHBOARD_USERNAME) && secureEqual(password, env.DASHBOARD_PASSWORD);
+  const valid = secureSecretEqual(username, env.DASHBOARD_USERNAME) && secureSecretEqual(password, env.DASHBOARD_PASSWORD);
   if (valid) {
     failedLogins.delete(clientId);
     return true;
@@ -45,29 +45,34 @@ export function requireDashboardSession(request: FastifyRequest, env: Env, now =
   const authorization = request.headers.authorization ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   const [encoded, signature] = token.split(".");
-  if (!encoded || !signature || !secureEqual(signature, sign(encoded, env.DASHBOARD_SESSION_SECRET))) {
-    throw unauthorized();
+  if (!encoded || !signature || !secureSecretEqual(signature, sign(encoded, env.DASHBOARD_SESSION_SECRET))) {
+    throw dashboardUnauthorized();
   }
   try {
     const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SessionPayload;
-    if (payload.exp <= now || payload.sub !== env.DASHBOARD_USERNAME) throw unauthorized();
+    if (payload.exp <= now || payload.sub !== env.DASHBOARD_USERNAME || typeof payload.nonce !== "string") throw dashboardUnauthorized();
     return payload;
   } catch {
-    throw unauthorized();
+    throw dashboardUnauthorized();
   }
+}
+
+export function extractDashboardToken(request: FastifyRequest): string {
+  const authorization = request.headers.authorization ?? "";
+  return authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
 }
 
 function sign(value: string, secret: string): string {
   return createHmac("sha256", secret).update(value).digest("base64url");
 }
 
-function secureEqual(left: string, right: string): boolean {
+export function secureSecretEqual(left: string, right: string): boolean {
   const leftHash = createHash("sha256").update(left).digest();
   const rightHash = createHash("sha256").update(right).digest();
   return timingSafeEqual(leftHash, rightHash);
 }
 
-function unauthorized(): Error & { statusCode: number } {
+export function dashboardUnauthorized(): Error & { statusCode: number } {
   const error = new Error("Sessão inválida ou expirada") as Error & { statusCode: number };
   error.statusCode = 401;
   return error;
