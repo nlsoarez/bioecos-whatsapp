@@ -129,8 +129,8 @@ O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. A im
 git clone https://github.com/nlsoarez/bioecos-whatsapp.git /opt/bioecos-build
 cd /opt/bioecos-build
 git checkout --detach COMMIT_REVISADO
-docker build --pull=false --build-arg BUILD_REVISION=COMMIT_REVISADO -t bioecos-whatsapp:0.2.3-security .
-docker build --pull=false -f Dockerfile.backup -t bioecos-backup:0.2.3-security .
+docker build --pull=false --build-arg BUILD_REVISION=COMMIT_REVISADO -t bioecos-whatsapp:0.2.4-security .
+docker build --pull=false -f Dockerfile.backup -t bioecos-backup:0.2.4-security .
 ```
 
 As imagens-base são fixadas por digest. O Compose usa `pull_policy: never`, filesystem somente leitura, remoção de capabilities, limite de processos, rede interna e `no-new-privileges`. A única tarefa root é o inicializador sem rede que ajusta a propriedade dos dois volumes graváveis.

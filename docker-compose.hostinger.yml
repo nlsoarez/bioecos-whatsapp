@@ -41,7 +41,7 @@ services:
       retries: 12
 
   bioecos-api:
-    image: ${BIOECOS_API_IMAGE:-bioecos-whatsapp:0.2.3-security}
+    image: ${BIOECOS_API_IMAGE:-bioecos-whatsapp:0.2.4-security}
     pull_policy: never
     container_name: bioecos-api
     restart: unless-stopped
@@ -112,7 +112,7 @@ services:
       start_period: 30s
 
   bioecos-backup:
-    image: ${BIOECOS_BACKUP_IMAGE:-bioecos-backup:0.2.3-security}
+    image: ${BIOECOS_BACKUP_IMAGE:-bioecos-backup:0.2.4-security}
     pull_policy: never
     container_name: bioecos-backup
     restart: unless-stopped

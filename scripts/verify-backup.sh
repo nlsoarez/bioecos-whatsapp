@@ -3,7 +3,7 @@ set -eu
 
 encrypted_file=${1:?Uso: verify-backup.sh /backups/bioecos-AAAAMMDD.dump.gpg}
 checksum_file="${encrypted_file}.sha256"
-temporary_file=$(mktemp /tmp/bioecos-restore.XXXXXX.dump)
+temporary_file=$(mktemp /tmp/bioecos-restore.XXXXXX)
 trap 'rm -f "$temporary_file"' EXIT
 
 test -n "${BACKUP_ENCRYPTION_KEY:-}" || { echo "BACKUP_ENCRYPTION_KEY não definida" >&2; exit 1; }
