@@ -693,7 +693,7 @@ export class PostgresRepository implements BioecosRepository {
           JOIN tags t ON t.id = ct.tag_id WHERE ct.contact_id = c.id) AS tags
        FROM contacts c JOIN leads l ON l.contact_id = c.id
        JOIN pipeline_stages ps ON ps.id = l.pipeline_stage_id
-       LEFT JOIN LATERAL (SELECT * FROM conversations x WHERE x.contact_id = c.id ORDER BY x.created_at DESC LIMIT 1) cv ON true
+       LEFT JOIN LATERAL (SELECT * FROM conversations x WHERE x.contact_id = c.id ORDER BY x.started_at DESC LIMIT 1) cv ON true
        WHERE c.id = $1`,
       [contactId],
     );
