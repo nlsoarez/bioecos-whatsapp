@@ -12,6 +12,17 @@ const env = loadEnv({
 });
 
 describe("diagnóstico de crédito OpenAI", () => {
+  it("distingue chave ausente de chave inválida", async () => {
+    const request = async () => {
+      throw new Error("A OpenAI não deve ser consultada sem chave");
+    };
+    const client = new OpenAIResponsesClient(env, request as typeof fetch, async () => null);
+    await expect(client.testCredit()).resolves.toMatchObject({
+      state: "not_configured",
+      message: "Chave OpenAI não configurada",
+    });
+  });
+
   it("distingue falta de crédito de limite temporário", async () => {
     const request = async () => new Response(JSON.stringify({
       error: { type: "insufficient_quota", code: "insufficient_quota" },

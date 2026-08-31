@@ -191,6 +191,7 @@ function renderOverview(overview) {
   const aiConfigured = Boolean(services.ai?.configured);
   const aiHealth = services.ai?.health ?? { state: "not_tested", message: "Crédito ainda não testado" };
   const aiLabels = {
+    not_configured: "Chave não configurada",
     operational: "Operacional",
     insufficient_quota: "Sem crédito",
     invalid_key: "Chave inválida",

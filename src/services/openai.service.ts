@@ -26,7 +26,7 @@ export interface AgentClient {
 type ResponseOutputItem = Record<string, unknown> & { type?: string; name?: string; arguments?: string; call_id?: string };
 type OpenAIResponse = { id?: string; output?: ResponseOutputItem[]; output_text?: string; error?: unknown };
 
-export type OpenAIHealthState = "not_tested" | "operational" | "insufficient_quota" | "invalid_key" | "rate_limited" | "unavailable";
+export type OpenAIHealthState = "not_configured" | "not_tested" | "operational" | "insufficient_quota" | "invalid_key" | "rate_limited" | "unavailable";
 
 export interface OpenAIHealthStatus {
   state: OpenAIHealthState;
@@ -137,7 +137,7 @@ export class OpenAIResponsesClient implements AgentClient {
   async testCredit(): Promise<OpenAIHealthStatus> {
     const apiKey = await this.apiKeyProvider();
     if (!apiKey) {
-      this.healthStatus = health("invalid_key", "Chave OpenAI não configurada");
+      this.healthStatus = health("not_configured", "Chave OpenAI não configurada");
       return this.getHealthStatus();
     }
     const response = await this.request(`${this.env.OPENAI_BASE_URL.replace(/\/$/, "")}/responses`, {
