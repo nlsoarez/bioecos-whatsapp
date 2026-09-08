@@ -24,6 +24,7 @@ async function setup() {
     EVOLUTION_API_URL: "http://evolution:8080",
     EVOLUTION_API_KEY: "evolution-secret",
     EVOLUTION_INSTANCE_NAME: "bioecos",
+    EVOLUTION_WEBHOOK_SECRET: "webhook-secret-at-least-32-characters",
     ADMIN_API_KEY: "admin-secret-key",
     PII_ENCRYPTION_KEY: "encryption-secret",
     DASHBOARD_USERNAME: "operador",
@@ -152,6 +153,30 @@ describe("rotas do dashboard", () => {
       payload: JSON.stringify({ content: "x".repeat(1_100_000) }),
     });
     expect(oversized.statusCode).toBe(413);
+    await app.close();
+  });
+
+  it("rejeita webhook sem o segredo correto e restringe CORS", async () => {
+    const { app } = await setup();
+    const payload = {
+      event: "messages.upsert",
+      data: {
+        key: { id: "security-test", remoteJid: "5521971970274@s.whatsapp.net", fromMe: false },
+        message: { conversation: "Olá" },
+        messageTimestamp: 1_700_000_000,
+      },
+    };
+    expect((await app.inject({ method: "POST", url: "/webhooks/evolution", payload })).statusCode).toBe(401);
+    expect((await app.inject({
+      method: "POST", url: "/webhooks/evolution",
+      headers: { "x-webhook-secret": "segredo-incorreto" }, payload,
+    })).statusCode).toBe(401);
+
+    const cors = await app.inject({
+      method: "OPTIONS", url: "/dashboard/overview",
+      headers: { origin: "https://attacker.example", "access-control-request-method": "GET" },
+    });
+    expect(cors.headers["access-control-allow-origin"]).toBeUndefined();
     await app.close();
   });
 });

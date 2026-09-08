@@ -11,9 +11,12 @@ export interface SessionPayload {
 const failedLogins = new Map<string, { count: number; resetAt: number }>();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
+const MAX_TRACKED_CLIENTS = 10_000;
+let nextCleanupAt = 0;
 
 export function authenticateCredentials(env: Env, username: string, password: string, clientId: string): boolean {
   const now = Date.now();
+  cleanupFailedLogins(now);
   const attempts = failedLogins.get(clientId);
   if (attempts && attempts.resetAt > now && attempts.count >= MAX_ATTEMPTS) return false;
   if (attempts && attempts.resetAt <= now) failedLogins.delete(clientId);
@@ -24,6 +27,10 @@ export function authenticateCredentials(env: Env, username: string, password: st
     return true;
   }
   const current = failedLogins.get(clientId);
+  if (!current && failedLogins.size >= MAX_TRACKED_CLIENTS) {
+    const oldestClient = failedLogins.keys().next().value as string | undefined;
+    if (oldestClient) failedLogins.delete(oldestClient);
+  }
   failedLogins.set(clientId, {
     count: (current?.count ?? 0) + 1,
     resetAt: current?.resetAt && current.resetAt > now ? current.resetAt : now + LOGIN_WINDOW_MS,
@@ -55,6 +62,14 @@ export function requireDashboardSession(request: FastifyRequest, env: Env, now =
   } catch {
     throw dashboardUnauthorized();
   }
+}
+
+function cleanupFailedLogins(now: number): void {
+  if (now < nextCleanupAt) return;
+  for (const [clientId, attempts] of failedLogins) {
+    if (attempts.resetAt <= now) failedLogins.delete(clientId);
+  }
+  nextCleanupAt = now + 60_000;
 }
 
 export function extractDashboardToken(request: FastifyRequest): string {

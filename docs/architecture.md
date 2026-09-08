@@ -20,8 +20,8 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 
 ## Fluxo de mensagem
 
-1. O webhook valida o segredo opcional e normaliza o evento.
-2. Eventos de grupo, status e conteúdo sem texto são ignorados. Mensagens próprias são classificadas como eco da automação ou intervenção humana.
+1. O webhook valida o segredo compartilhado, obrigatório em produção, e normaliza o evento.
+2. Eventos de grupo, status, conteúdo sem texto, mensagens acima de 4.096 caracteres e identificadores anormais são ignorados antes da fila e da OpenAI. Mensagens próprias são classificadas como eco da automação ou intervenção humana.
 3. A mensagem entra em `webhook_jobs` com `UNIQUE external_message_id`; o webhook responde `202` sem esperar a OpenAI.
 4. Workers concorrentes usam `FOR UPDATE SKIP LOCKED`; falhas recebem retry exponencial e, após cinco tentativas, estado `failed`.
 5. Um pedido `SAIR` cancela o acompanhamento mesmo se a conversa estiver pausada.
@@ -55,6 +55,7 @@ O histórico completo fica no PostgreSQL. O modelo recebe dados estruturados, es
 - segredos somente por ambiente;
 - portal protegido por sessão assinada; chaves e telefone do coordenador são cifrados no servidor e nunca retornam ao navegador.
 - headers de segurança, CSP no portal e rate limit global e de login;
+- filtros do proxy devem remover `X-Webhook-Secret` e `X-Admin-Key` antes de gravar access logs;
 - API sem porta pública direta; somente o proxy HTTPS acessa o contêiner;
 - exportação e exclusão de lead, minimização de payload bruto e retenção configurável;
 - backup diário PostgreSQL com retenção independente.

@@ -25,4 +25,6 @@
 - [ ] Homologar a coleta de lead, a classificação quente e o cancelamento por `SAIR`.
 - [ ] Aprovar o texto, a base legal e os contatos nos dias 30, 60 e 90 antes de ativar o acompanhamento no portal.
 - [ ] Testar reenvio do mesmo webhook e falhas temporárias da Evolution.
-- [ ] Revisar logs para garantir ausência de segredos e dados excessivos.
+- [ ] Filtrar `X-Webhook-Secret` e `X-Admin-Key` nos access logs do proxy e validar com valores fictícios.
+- [ ] Rotacionar o segredo do webhook e a chave administrativa se uma versão anterior do proxy os registrou.
+- [ ] Revisar logs para garantir ausência de segredos e dados excessivos sem apagar evidências de auditoria.

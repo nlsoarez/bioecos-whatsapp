@@ -4,9 +4,9 @@ services:
     environment:
       POSTGRES_DB: bioecos
       POSTGRES_USER: bioecos
-      POSTGRES_PASSWORD: bioecos
+      POSTGRES_PASSWORD: ${BIOECOS_DB_PASSWORD:?Defina BIOECOS_DB_PASSWORD no arquivo .env}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - bioecos_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +19,7 @@ services:
     build: .
     env_file: .env
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       postgres:
         condition: service_healthy

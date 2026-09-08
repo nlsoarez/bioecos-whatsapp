@@ -30,6 +30,16 @@ export interface EvolutionWebhookState {
   message: string;
 }
 
+class EvolutionHttpError extends Error {
+  constructor(status: number, readonly retryable: boolean) {
+    super(`Evolution API respondeu com status ${status}`);
+  }
+}
+
+const MAX_WEBHOOK_MESSAGE_CHARS = 4_096;
+const MAX_EXTERNAL_MESSAGE_ID_CHARS = 200;
+const MAX_PUSH_NAME_CHARS = 200;
+
 export class EvolutionService implements MessageSender {
   private readonly automatedOutbounds = new Map<string, number>();
 
@@ -41,7 +51,8 @@ export class EvolutionService implements MessageSender {
     let lastError: unknown;
 
     const normalizedPhone = normalizePhone(phone);
-    this.automatedOutbounds.set(outboundFingerprint(normalizedPhone, text), Date.now() + 10 * 60_000);
+    const fingerprint = outboundFingerprint(normalizedPhone, text);
+    this.rememberAutomatedOutbound(fingerprint);
     for (let attempt = 0; attempt <= this.env.EVOLUTION_MAX_RETRIES; attempt += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.env.EVOLUTION_REQUEST_TIMEOUT_MS);
@@ -58,12 +69,16 @@ export class EvolutionService implements MessageSender {
           return { externalMessageId: String(key?.id ?? `evolution:${Date.now()}`), raw };
         }
         if (response.status < 500 || attempt === this.env.EVOLUTION_MAX_RETRIES) {
-          throw new Error(`Evolution API respondeu com status ${response.status}`);
+          this.automatedOutbounds.delete(fingerprint);
+          throw new EvolutionHttpError(response.status, response.status >= 500);
         }
         lastError = new Error(`Evolution API respondeu ${response.status}`);
       } catch (error) {
         lastError = error;
-        if (attempt === this.env.EVOLUTION_MAX_RETRIES) throw error;
+        if ((error instanceof EvolutionHttpError && !error.retryable) || attempt === this.env.EVOLUTION_MAX_RETRIES) {
+          this.automatedOutbounds.delete(fingerprint);
+          throw error;
+        }
       } finally {
         clearTimeout(timer);
       }
@@ -74,11 +89,27 @@ export class EvolutionService implements MessageSender {
 
   isAutomatedOutbound(phone: string, text: string): boolean {
     const now = Date.now();
-    for (const [key, expiresAt] of this.automatedOutbounds) if (expiresAt < now) this.automatedOutbounds.delete(key);
+    this.cleanupAutomatedOutbounds(now);
     const key = outboundFingerprint(normalizePhone(phone), text);
     const automated = (this.automatedOutbounds.get(key) ?? 0) >= now;
     if (automated) this.automatedOutbounds.delete(key);
     return automated;
+  }
+
+  private rememberAutomatedOutbound(fingerprint: string): void {
+    const now = Date.now();
+    this.cleanupAutomatedOutbounds(now);
+    if (!this.automatedOutbounds.has(fingerprint) && this.automatedOutbounds.size >= 10_000) {
+      const oldest = this.automatedOutbounds.keys().next().value as string | undefined;
+      if (oldest) this.automatedOutbounds.delete(oldest);
+    }
+    this.automatedOutbounds.set(fingerprint, now + 10 * 60_000);
+  }
+
+  private cleanupAutomatedOutbounds(now: number): void {
+    for (const [key, expiresAt] of this.automatedOutbounds) {
+      if (expiresAt < now) this.automatedOutbounds.delete(key);
+    }
   }
 
   async connectionState(): Promise<EvolutionConnectionState> {
@@ -223,24 +254,27 @@ function parseEvolutionMessage(payload: unknown):
   if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid === "status@broadcast") return null;
   const message = data.message as Record<string, unknown> | undefined;
   const content = message ? messageText(message) : null;
-  if (!content?.trim()) return null;
+  const normalizedContent = content?.trim() ?? "";
+  if (!normalizedContent || normalizedContent.length > MAX_WEBHOOK_MESSAGE_CHARS || normalizedContent.includes("\u0000")) return null;
   const externalMessageId = String(key.id ?? data.id ?? "");
-  if (!externalMessageId) return null;
+  if (!externalMessageId || externalMessageId.length > MAX_EXTERNAL_MESSAGE_ID_CHARS || /[\u0000\r\n]/.test(externalMessageId)) return null;
   const rawTimestamp = data.messageTimestamp ?? root.date_time;
   const numericTimestamp = Number(rawTimestamp);
-  const timestamp = Number.isFinite(numericTimestamp)
+  const candidateTimestamp = Number.isFinite(numericTimestamp)
     ? new Date(numericTimestamp > 10_000_000_000 ? numericTimestamp : numericTimestamp * 1000)
     : new Date();
+  const timestamp = Number.isNaN(candidateTimestamp.getTime()) ? new Date() : candidateTimestamp;
+  const pushName = typeof data.pushName === "string" ? data.pushName.trim() : "";
   const common = {
     externalMessageId,
     phone: normalizePhone(remoteJid),
-    content: content.trim(),
+    content: normalizedContent,
     timestamp,
     raw: payload,
   };
   return key.fromMe === true
     ? { direction: "outbound", message: common }
-    : { direction: "inbound", message: { ...common, pushName: typeof data.pushName === "string" ? data.pushName : null } };
+    : { direction: "inbound", message: { ...common, pushName: pushName && pushName.length <= MAX_PUSH_NAME_CHARS && !pushName.includes("\u0000") ? pushName : null } };
 }
 
 function outboundFingerprint(phone: string, text: string): string {

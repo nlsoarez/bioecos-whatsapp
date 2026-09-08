@@ -23,6 +23,36 @@ describe("Evolution webhook v2", () => {
     expect(parseEvolutionWebhook({ data: { key: { id: "2", remoteJid: "5521971970274@s.whatsapp.net", fromMe: true }, message: { conversation: "x" } } })).toBeNull();
   });
 
+  it("rejeita conteúdo e identificadores excessivos antes da fila e da OpenAI", () => {
+    const payload = (id: string, content: string) => ({
+      event: "messages.upsert",
+      data: {
+        key: { id, remoteJid: "5521971970274@s.whatsapp.net", fromMe: false },
+        pushName: "Cliente",
+        message: { conversation: content },
+        messageTimestamp: 1_700_000_000,
+      },
+    });
+    expect(parseEvolutionWebhook(payload("bounded", "A".repeat(4_096)))?.content).toHaveLength(4_096);
+    expect(parseEvolutionWebhook(payload("too-large", "A".repeat(4_097)))).toBeNull();
+    expect(parseEvolutionWebhook(payload("I".repeat(201), "Olá"))).toBeNull();
+    expect(parseEvolutionWebhook(payload("invalid\r\nid", "Olá"))).toBeNull();
+    expect(parseEvolutionWebhook(payload("nul-content", "Olá\u0000mundo"))).toBeNull();
+  });
+
+  it("normaliza timestamp fora da faixa representável sem derrubar o webhook", () => {
+    const result = parseEvolutionWebhook({
+      event: "messages.upsert",
+      data: {
+        key: { id: "invalid-date", remoteJid: "5521971970274@s.whatsapp.net", fromMe: false },
+        message: { conversation: "Olá" },
+        messageTimestamp: Number.MAX_VALUE,
+      },
+    });
+    expect(result?.timestamp).toBeInstanceOf(Date);
+    expect(Number.isNaN(result?.timestamp.getTime())).toBe(false);
+  });
+
   it("separa mensagem própria para registrar intervenção humana", () => {
     const result = parseEvolutionOutboundWebhook({
       event: "messages.upsert",
@@ -79,5 +109,40 @@ describe("Evolution webhook v2", () => {
     const evolution = new EvolutionService(env, request as typeof fetch);
     await expect(evolution.sendText("5521971970274", "Olá")).resolves.toMatchObject({ externalMessageId: "sent-1" });
     expect(body).toEqual({ number: "5521971970274", text: "Olá" });
+  });
+
+  it("não mantém eco automatizado quando o envio falha definitivamente", async () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgresql://test:test@localhost/test",
+      EVOLUTION_API_URL: "https://evolution.example.com",
+      EVOLUTION_API_KEY: "evolution-secret",
+      EVOLUTION_INSTANCE_NAME: "bioecos",
+      EVOLUTION_MAX_RETRIES: "0",
+      ADMIN_API_KEY: "admin-secret-key",
+    });
+    const request = async () => new Response(JSON.stringify({ error: "offline" }), { status: 503 });
+    const evolution = new EvolutionService(env, request as typeof fetch);
+    await expect(evolution.sendText("5521971970274", "Falhou")).rejects.toThrow("503");
+    expect(evolution.isAutomatedOutbound("5521971970274", "Falhou")).toBe(false);
+  });
+
+  it("não repete erro 4xx definitivo da Evolution", async () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgresql://test:test@localhost/test",
+      EVOLUTION_API_URL: "https://evolution.example.com",
+      EVOLUTION_API_KEY: "evolution-secret",
+      EVOLUTION_INSTANCE_NAME: "bioecos",
+      EVOLUTION_MAX_RETRIES: "3",
+      ADMIN_API_KEY: "admin-secret-key",
+    });
+    let requests = 0;
+    const request = async () => {
+      requests += 1;
+      return new Response(JSON.stringify({ error: "bad request" }), { status: 400 });
+    };
+    const evolution = new EvolutionService(env, request as typeof fetch);
+    await expect(evolution.sendText("5521971970274", "Inválida")).rejects.toThrow("400");
+    expect(requests).toBe(1);
+    expect(evolution.isAutomatedOutbound("5521971970274", "Inválida")).toBe(false);
   });
 });
