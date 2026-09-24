@@ -41,4 +41,19 @@ describe("acompanhamento mensal", () => {
     expect(sender.sent[0]).toContain("SAIR");
     expect(repository.monthlySent).toEqual([candidate]);
   });
+
+  it("não envia acompanhamento para número ignorado ativo", async () => {
+    const repository = new InMemoryRepository();
+    repository.monthlySettings.enabled = true;
+    await repository.createIgnoredPhoneNumber({ phoneNumber: "(21) 97197-0274", name: null, note: null, active: true }, "test");
+    repository.monthlyCandidates = [{
+      leadId: "lead-1", contactId: "contact-1", conversationId: "conversation-1",
+      phone: "5521971970274", name: "Maria", course: "Aromaterapia", attempts: 0,
+      step: 1, sequenceId: "sequence-1",
+    }];
+    const sender = new FakeSender();
+    const result = await new MonthlyFollowupService(repository, sender).runOnce();
+    expect(result).toMatchObject({ sent: 0, failed: 0 });
+    expect(sender.sent).toHaveLength(0);
+  });
 });

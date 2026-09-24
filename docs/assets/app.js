@@ -10,6 +10,7 @@ const loginError = byId("login-error");
 const loginSubmit = byId("login-submit");
 let refreshTimer = null;
 let openedHash = "";
+let ignoredNumbers = [];
 
 byId("toggle-password")?.addEventListener("click", () => toggleVisibility("password", "toggle-password"));
 byId("toggle-api-key")?.addEventListener("click", () => toggleVisibility("openai-key", "toggle-api-key"));
@@ -22,6 +23,9 @@ byId("connect-whatsapp")?.addEventListener("click", connectWhatsApp);
 byId("repair-webhook")?.addEventListener("click", repairWebhook);
 byId("toggle-followup")?.addEventListener("click", toggleMonthlyFollowup);
 byId("coordinator-form")?.addEventListener("submit", saveCoordinatorPhone);
+byId("ignored-number-form")?.addEventListener("submit", saveIgnoredNumber);
+byId("cancel-ignored-edit")?.addEventListener("click", resetIgnoredNumberForm);
+byId("ignored-search")?.addEventListener("input", debounce(() => void loadIgnoredNumbers(), 250));
 document.querySelectorAll("#lead-filters button").forEach((button) => {
   button.addEventListener("click", () => loadLeads(button.dataset.filter));
 });
@@ -554,6 +558,140 @@ function showSection(section) {
   document.querySelectorAll(".dashboard-section").forEach((element) => { element.hidden = element.id !== `section-${section}`; });
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.section === section));
   if (section === "leads") loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");
+  if (section === "ignored-numbers") loadIgnoredNumbers();
+}
+
+async function loadIgnoredNumbers() {
+  const list = byId("ignored-number-list");
+  const search = byId("ignored-search").value.trim();
+  list.replaceChildren(emptyState("Carregando números..."));
+  try {
+    const result = await api(`/dashboard/settings/ignored-numbers?search=${encodeURIComponent(search)}`);
+    ignoredNumbers = Array.isArray(result.ignoredNumbers) ? result.ignoredNumbers : [];
+    renderIgnoredNumbers();
+  } catch (error) {
+    list.replaceChildren(emptyState(error.message));
+  }
+}
+
+function renderIgnoredNumbers() {
+  const list = byId("ignored-number-list");
+  list.replaceChildren();
+  byId("ignored-count").textContent = String(ignoredNumbers.length);
+  if (!ignoredNumbers.length) return list.append(emptyState("Nenhum número cadastrado."));
+  ignoredNumbers.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = `ignored-number-row${item.active ? "" : " inactive"}`;
+    const main = document.createElement("div");
+    main.className = "ignored-number-main";
+    const name = document.createElement("strong");
+    name.textContent = item.name || "Sem identificação";
+    const phone = document.createElement("span");
+    phone.textContent = formatCanonicalPhone(item.phoneNumber);
+    const note = document.createElement("small");
+    note.textContent = item.note || (item.active ? "Bloqueio ativo" : "Bloqueio desativado");
+    main.append(name, phone, note);
+    const actions = document.createElement("div");
+    actions.className = "ignored-number-actions";
+    actions.append(
+      ignoredAction(item.active ? "Desativar" : "Ativar", () => toggleIgnoredNumber(item)),
+      ignoredAction("Editar", () => editIgnoredNumber(item)),
+      ignoredAction("Excluir", () => deleteIgnoredNumber(item), true),
+    );
+    row.append(main, actions);
+    list.append(row);
+  });
+}
+
+function ignoredAction(label, action, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `secondary-action${danger ? " danger-action" : ""}`;
+  button.textContent = label;
+  button.addEventListener("click", action);
+  return button;
+}
+
+async function saveIgnoredNumber(event) {
+  event.preventDefault();
+  const id = byId("ignored-number-id").value;
+  const payload = ignoredFormPayload();
+  const button = byId("save-ignored-number");
+  button.disabled = true;
+  try {
+    await api(id ? `/dashboard/settings/ignored-numbers/${encodeURIComponent(id)}` : "/dashboard/settings/ignored-numbers", {
+      method: id ? "PATCH" : "POST", body: payload,
+    });
+    resetIgnoredNumberForm();
+    setFeedback(byId("ignored-form-feedback"), id ? "Número atualizado." : "Número adicionado à lista protegida.", "success");
+    await loadIgnoredNumbers();
+  } catch (error) {
+    setFeedback(byId("ignored-form-feedback"), error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function editIgnoredNumber(item) {
+  byId("ignored-number-id").value = item.id;
+  byId("ignored-phone").value = formatCanonicalPhone(item.phoneNumber);
+  byId("ignored-name").value = item.name || "";
+  byId("ignored-note").value = item.note || "";
+  byId("ignored-active").checked = Boolean(item.active);
+  byId("ignored-form-title").textContent = "Editar número";
+  byId("save-ignored-number").textContent = "Salvar alterações";
+  byId("cancel-ignored-edit").hidden = false;
+  byId("ignored-phone").focus();
+}
+
+async function toggleIgnoredNumber(item) {
+  try {
+    await api(`/dashboard/settings/ignored-numbers/${encodeURIComponent(item.id)}`, {
+      method: "PATCH",
+      body: { phoneNumber: item.phoneNumber, name: item.name, note: item.note, active: !item.active },
+    });
+    await loadIgnoredNumbers();
+  } catch (error) { window.alert(error.message); }
+}
+
+async function deleteIgnoredNumber(item) {
+  if (!window.confirm(`Excluir ${formatCanonicalPhone(item.phoneNumber)} da lista de números ignorados?`)) return;
+  try {
+    await api(`/dashboard/settings/ignored-numbers/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+    if (byId("ignored-number-id").value === item.id) resetIgnoredNumberForm();
+    await loadIgnoredNumbers();
+  } catch (error) { window.alert(error.message); }
+}
+
+function ignoredFormPayload() {
+  return {
+    phoneNumber: byId("ignored-phone").value.trim(),
+    name: byId("ignored-name").value.trim() || null,
+    note: byId("ignored-note").value.trim() || null,
+    active: byId("ignored-active").checked,
+  };
+}
+
+function resetIgnoredNumberForm() {
+  byId("ignored-number-form").reset();
+  byId("ignored-number-id").value = "";
+  byId("ignored-active").checked = true;
+  byId("ignored-form-title").textContent = "Adicionar número";
+  byId("save-ignored-number").textContent = "Adicionar número";
+  byId("cancel-ignored-edit").hidden = true;
+  setFeedback(byId("ignored-form-feedback"), "", "");
+}
+
+function formatCanonicalPhone(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (digits.startsWith("55") && digits.length === 13) return `+55 (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
+  if (digits.startsWith("55") && digits.length === 12) return `+55 (${digits.slice(2, 4)}) ${digits.slice(4, 8)}-${digits.slice(8)}`;
+  return digits ? `+${digits}` : "—";
+}
+
+function debounce(fn, delay) {
+  let timer;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
 }
 
 function setService(id, ok, label, warning = false) {

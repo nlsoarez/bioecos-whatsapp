@@ -5,10 +5,11 @@ import type {
   ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
   IngestResult, KnowledgeHit, LeadAssessment, LeadTemperature, MonthlyFollowupCandidate,
   MonthlyFollowupSettings, QualificationStep,
-  OutboundWebhookMessage,
+  OutboundWebhookMessage, IgnoredPhoneNumber, IgnoredPhoneNumberInput,
 } from "../domain/types.js";
-import type { BioecosRepository, ContactUpdate } from "./bioecos.repository.js";
+import { DuplicateIgnoredPhoneError, type BioecosRepository, type ContactUpdate } from "./bioecos.repository.js";
 import { PiiCipher } from "../security/pii-cipher.js";
+import { normalizePhone } from "../domain/phone.js";
 
 type Queryable = Pick<pg.Pool | pg.PoolClient, "query">;
 
@@ -427,6 +428,10 @@ export class PostgresRepository implements BioecosRepository {
          AND l.followup_failure_attempts < 3
          AND (l.followup_locked_at IS NULL OR l.followup_locked_at < now() - interval '10 minutes')
          AND l.enrollment_status = 'pending'
+         AND NOT EXISTS (
+           SELECT 1 FROM ignored_phone_numbers i
+           WHERE i.project_id = c.project_id AND i.phone_hash = c.phone_hash AND i.active = true
+         )
          AND ps.name NOT IN ('Convertido', 'Encerrado', 'Matrícula concluída', 'Sem interesse', 'Conversa finalizada')
          AND cv.automation_paused = false AND cv.workflow_state = 'ai_attending' AND cv.current_owner = 'ai'
          AND cv.last_interaction_at < l.followup_next_at
@@ -869,6 +874,119 @@ export class PostgresRepository implements BioecosRepository {
     return copy;
   }
 
+  async isPhoneIgnored(phone: string): Promise<boolean> {
+    const phoneHash = this.pii.phoneHash(normalizePhone(phone));
+    const result = await this.pool.query<{ ignored: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM ignored_phone_numbers i
+         JOIN projects p ON p.id = i.project_id
+         WHERE p.slug = 'bioecos' AND i.phone_hash = $1 AND i.active = true
+       ) AS ignored`,
+      [phoneHash],
+    );
+    return result.rows[0]?.ignored === true;
+  }
+
+  async listIgnoredPhoneNumbers(search = ""): Promise<IgnoredPhoneNumber[]> {
+    const result = await this.pool.query<{
+      id: string; phone_number: string; name: string | null; note: string | null;
+      active: boolean; created_at: Date; updated_at: Date;
+    }>(
+      `SELECT i.id, i.phone_number, i.name, i.note, i.active, i.created_at, i.updated_at
+       FROM ignored_phone_numbers i JOIN projects p ON p.id = i.project_id
+       WHERE p.slug = 'bioecos' ORDER BY i.active DESC, i.updated_at DESC LIMIT 2000`,
+    );
+    const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
+    const searchDigits = search.replace(/\D/g, "");
+    return result.rows.map((row) => this.mapIgnoredPhone(row)).filter((item) => {
+      if (!normalizedSearch) return true;
+      return (Boolean(searchDigits) && item.phoneNumber.includes(searchDigits)) || item.name?.toLocaleLowerCase("pt-BR").includes(normalizedSearch)
+        || item.note?.toLocaleLowerCase("pt-BR").includes(normalizedSearch);
+    });
+  }
+
+  async createIgnoredPhoneNumber(input: IgnoredPhoneNumberInput, actor: string): Promise<IgnoredPhoneNumber> {
+    const normalized = normalizePhone(input.phoneNumber);
+    try {
+      const result = await this.pool.query<{
+        id: string; phone_number: string; name: string | null; note: string | null;
+        active: boolean; created_at: Date; updated_at: Date;
+      }>(
+        `INSERT INTO ignored_phone_numbers(project_id, phone_number, phone_hash, name, note, active)
+         SELECT id, $1, $2, $3, $4, $5 FROM projects WHERE slug = 'bioecos'
+         RETURNING id, phone_number, name, note, active, created_at, updated_at`,
+        [this.pii.encrypt(normalized), this.pii.phoneHash(normalized), this.pii.encryptNullable(input.name),
+          this.pii.encryptNullable(input.note), input.active],
+      );
+      const row = result.rows[0];
+      if (!row) throw new Error("Projeto Bioecos não encontrado");
+      await this.auditIgnoredPhone(actor, "ignored_phone.created", row.id, input.active);
+      return this.mapIgnoredPhone(row);
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new DuplicateIgnoredPhoneError();
+      throw error;
+    }
+  }
+
+  async updateIgnoredPhoneNumber(id: string, input: IgnoredPhoneNumberInput, actor: string): Promise<IgnoredPhoneNumber | null> {
+    const normalized = normalizePhone(input.phoneNumber);
+    try {
+      const result = await this.pool.query<{
+        id: string; phone_number: string; name: string | null; note: string | null;
+        active: boolean; created_at: Date; updated_at: Date;
+      }>(
+        `UPDATE ignored_phone_numbers i SET phone_number = $2, phone_hash = $3, name = $4, note = $5,
+           active = $6, updated_at = now()
+         FROM projects p WHERE i.id = $1 AND p.id = i.project_id AND p.slug = 'bioecos'
+         RETURNING i.id, i.phone_number, i.name, i.note, i.active, i.created_at, i.updated_at`,
+        [id, this.pii.encrypt(normalized), this.pii.phoneHash(normalized), this.pii.encryptNullable(input.name),
+          this.pii.encryptNullable(input.note), input.active],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      await this.auditIgnoredPhone(actor, "ignored_phone.updated", row.id, input.active);
+      return this.mapIgnoredPhone(row);
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new DuplicateIgnoredPhoneError();
+      throw error;
+    }
+  }
+
+  async deleteIgnoredPhoneNumber(id: string, actor: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `DELETE FROM ignored_phone_numbers i USING projects p
+       WHERE i.id = $1 AND p.id = i.project_id AND p.slug = 'bioecos' RETURNING i.id`,
+      [id],
+    );
+    if (!result.rowCount) return false;
+    await this.auditIgnoredPhone(actor, "ignored_phone.deleted", id, null);
+    return true;
+  }
+
+  private mapIgnoredPhone(row: {
+    id: string; phone_number: string; name: string | null; note: string | null;
+    active: boolean; created_at: Date; updated_at: Date;
+  }): IgnoredPhoneNumber {
+    return {
+      id: row.id,
+      phoneNumber: this.pii.decrypt(row.phone_number),
+      name: this.pii.decryptNullable(row.name),
+      note: this.pii.decryptNullable(row.note),
+      active: row.active,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+
+  private async auditIgnoredPhone(actor: string, action: string, id: string, active: boolean | null): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO audit_logs(project_id, actor, action, details)
+       SELECT id, $1, $2, jsonb_build_object('ignoredPhoneId', $3::text, 'active', $4::boolean)
+       FROM projects WHERE slug = 'bioecos'`,
+      [actor, action, id, active],
+    );
+  }
+
   private async auditForContext(context: ContactContext, actor: string, action: string, details: unknown): Promise<void> {
     const project = await this.pool.query<{ project_id: string }>("SELECT project_id FROM contacts WHERE id = $1", [context.contactId]);
     await this.audit(this.pool, project.rows[0]!.project_id, context.contactId, context.conversationId, actor, action, details);
@@ -880,4 +998,8 @@ export class PostgresRepository implements BioecosRepository {
       [projectId, contactId, conversationId, actor, action, JSON.stringify(details)],
     );
   }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "23505");
 }

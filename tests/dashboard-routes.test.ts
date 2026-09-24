@@ -8,6 +8,7 @@ import { RuntimeSecretStore } from "../src/security/runtime-secret.store.js";
 import { ConversationService } from "../src/services/conversation.service.js";
 import { EvolutionService } from "../src/services/evolution.service.js";
 import { OpenAIResponsesClient } from "../src/services/openai.service.js";
+import type { WebhookJobService } from "../src/services/webhook-job.service.js";
 import { InMemoryRepository } from "./support/in-memory.repository.js";
 
 const directories: string[] = [];
@@ -44,8 +45,14 @@ async function setup() {
   const evolution = new EvolutionService(env, request as typeof fetch);
   const openai = new OpenAIResponsesClient(env, request as typeof fetch, async () => secrets.get("OPENAI_API_KEY"));
   const conversations = new ConversationService(repository, openai, evolution);
-  const app = await buildApp({ env, repository, evolution, conversations, openai, secrets });
-  return { app, secrets };
+  const queued: unknown[] = [];
+  const webhookJobs = {
+    enqueue: async (payload: unknown) => { queued.push(payload); return true; },
+    status: async () => ({ pending: 0, processing: 0, failed: 0 }),
+    retryFailed: async () => 0,
+  } as unknown as WebhookJobService;
+  const app = await buildApp({ env, repository, evolution, conversations, openai, secrets, webhookJobs });
+  return { app, secrets, repository, queued };
 }
 
 describe("rotas do dashboard", () => {
@@ -177,6 +184,65 @@ describe("rotas do dashboard", () => {
       headers: { origin: "https://attacker.example", "access-control-request-method": "GET" },
     });
     expect(cors.headers["access-control-allow-origin"]).toBeUndefined();
+    await app.close();
+  });
+
+  it("gerencia números ignorados, normaliza formatos e rejeita duplicados", async () => {
+    const { app } = await setup();
+    expect((await app.inject({ method: "GET", url: "/dashboard/settings/ignored-numbers" })).statusCode).toBe(401);
+    const login = await app.inject({
+      method: "POST", url: "/dashboard/auth/login",
+      payload: { username: "operador", password: "dashboard-password-secret" },
+    });
+    const headers = { authorization: `Bearer ${login.json().token as string}` };
+    const created = await app.inject({
+      method: "POST", url: "/dashboard/settings/ignored-numbers", headers,
+      payload: { phoneNumber: "(21) 99999-9999", name: "Helder", note: "Número pessoal", active: true },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().ignoredNumber).toMatchObject({ phoneNumber: "5521999999999", name: "Helder", active: true });
+    expect((await app.inject({
+      method: "POST", url: "/dashboard/settings/ignored-numbers", headers,
+      payload: { phoneNumber: "+55 21 99999-9999", name: null, note: null, active: true },
+    })).statusCode).toBe(409);
+    const listed = await app.inject({ method: "GET", url: "/dashboard/settings/ignored-numbers?search=Helder", headers });
+    expect(listed.json().ignoredNumbers).toHaveLength(1);
+    const id = created.json().ignoredNumber.id as string;
+    const updated = await app.inject({
+      method: "PATCH", url: `/dashboard/settings/ignored-numbers/${id}`, headers,
+      payload: { phoneNumber: "21999999999", name: "Helder editado", note: "Pessoal", active: false },
+    });
+    expect(updated.json().ignoredNumber).toMatchObject({ phoneNumber: "5521999999999", active: false });
+    expect((await app.inject({ method: "DELETE", url: `/dashboard/settings/ignored-numbers/${id}`, headers })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/dashboard/settings/ignored-numbers", headers })).json().ignoredNumbers).toHaveLength(0);
+    await app.close();
+  });
+
+  it("encerra webhook de número ativo antes da fila e libera após desativação ou exclusão", async () => {
+    const { app, repository, queued } = await setup();
+    const item = await repository.createIgnoredPhoneNumber({
+      phoneNumber: "+55 21 99999-9999", name: "Protegido", note: null, active: true,
+    }, "test");
+    const payload = {
+      event: "messages.upsert",
+      data: { key: { id: "ignored-1", remoteJid: "5521999999999@s.whatsapp.net", fromMe: false },
+        message: { conversation: "Olá" }, messageTimestamp: 1_700_000_000 },
+    };
+    const headers = { "x-webhook-secret": "webhook-secret-at-least-32-characters" };
+    const ignored = await app.inject({ method: "POST", url: "/webhooks/evolution", headers, payload });
+    expect(ignored.statusCode).toBe(202);
+    expect(ignored.json()).toMatchObject({ accepted: false, status: "ignored" });
+    expect(queued).toHaveLength(0);
+
+    await repository.updateIgnoredPhoneNumber(item.id, { ...item, active: false }, "test");
+    payload.data.key.id = "inactive-1";
+    expect((await app.inject({ method: "POST", url: "/webhooks/evolution", headers, payload })).json().status).toBe("queued");
+    expect(queued).toHaveLength(1);
+
+    await repository.deleteIgnoredPhoneNumber(item.id, "test");
+    payload.data.key.id = "deleted-1";
+    expect((await app.inject({ method: "POST", url: "/webhooks/evolution", headers, payload })).json().status).toBe("queued");
+    expect(queued).toHaveLength(2);
     await app.close();
   });
 });

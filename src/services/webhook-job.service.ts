@@ -69,6 +69,10 @@ export class WebhookJobService {
       for (const job of claimed.rows) {
         try {
           const payload = normalizePayload(job.payload, this.pii);
+          if (await this.repository.isPhoneIgnored(payload.message.phone)) {
+            await this.pool.query("UPDATE webhook_jobs SET status = 'completed', completed_at = now(), locked_at = null WHERE id = $1", [job.id]);
+            continue;
+          }
           if (payload.kind === "inbound") {
             await this.conversations.handle(payload.message);
           } else if (!this.evolution.isAutomatedOutbound(payload.message.phone, payload.message.content)) {

@@ -11,4 +11,14 @@ describe("configuração segura de desenvolvimento", () => {
     expect(compose).not.toContain('"5432:5432"');
     expect(compose).not.toContain('"3000:3000"');
   });
+
+  it("persiste números ignorados com isolamento por projeto e índice de consulta ativo", async () => {
+    const migration = await readFile("src/db/migrations/007_ignored_phone_numbers.sql", "utf8");
+    const repository = await readFile("src/repositories/postgres.repository.ts", "utf8");
+    expect(migration).toContain("project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE");
+    expect(migration).toContain("UNIQUE(project_id, phone_hash)");
+    expect(migration).toContain("WHERE active = true");
+    expect(repository).toContain("p.id = i.project_id");
+    expect(repository).toContain("p.slug = 'bioecos'");
+  });
 });

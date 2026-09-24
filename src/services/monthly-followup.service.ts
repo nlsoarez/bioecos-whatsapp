@@ -28,6 +28,7 @@ export class MonthlyFollowupService {
       let failed = 0;
 
       for (const candidate of candidates) {
+        if (await this.repository.isPhoneIgnored(candidate.phone)) continue;
         const firstName = candidate.name?.trim().split(/\s+/)[0];
         const greeting = firstName ? `Olá, ${firstName}!` : "Olá!";
         const content = followupMessage(candidate.step, greeting, candidate.course);

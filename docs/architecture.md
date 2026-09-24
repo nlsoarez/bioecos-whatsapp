@@ -23,6 +23,7 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 1. O webhook valida o segredo compartilhado, obrigatório em produção, e normaliza o evento.
 2. Eventos de grupo, status, conteúdo sem texto, mensagens acima de 4.096 caracteres e identificadores anormais são ignorados antes da fila e da OpenAI. Mensagens próprias são classificadas como eco da automação ou intervenção humana.
 3. A mensagem entra em `webhook_jobs` com `UNIQUE external_message_id`; o webhook responde `202` sem esperar a OpenAI.
+   Antes da fila, o telefone é normalizado e comparado por hash com `ignored_phone_numbers`. Um bloqueio ativo encerra o webhook silenciosamente, sem criar contato, lead ou chamada de IA. O worker e o serviço de conversa repetem a verificação como defesa em profundidade.
 4. Workers concorrentes usam `FOR UPDATE SKIP LOCKED`; falhas recebem retry exponencial e, após cinco tentativas, estado `failed`.
 5. Um pedido `SAIR` cancela o acompanhamento mesmo se a conversa estiver pausada.
 6. Se a conversa pertence ao coordenador ou está pausada, a IA não é chamada.
@@ -40,6 +41,10 @@ O worker consulta no máximo 25 candidatos a cada cinco minutos. Somente leads q
 ## RAG
 
 Cada seção das fontes ativas vira um chunk. O vetor padrão tem 1.536 dimensões, compatível com `text-embedding-3-small`. A busca usa o maior score entre similaridade cosseno e full-text em português. Vetores pendentes são gerados automaticamente após salvar uma chave operacional e na inicialização.
+
+## Números ignorados
+
+O cadastro pertence ao `project_id`. Telefone, nome e observação ficam cifrados; a consulta usa HMAC do telefone canônico. Formatos brasileiros sem DDI recebem `55`. A restrição também é aplicada antes de follow-ups, inclusive para itens que já estavam na fila quando o bloqueio foi ativado.
 
 O histórico completo fica no PostgreSQL. O modelo recebe dados estruturados, estado, classificação, dúvidas, objeções, até 24 mensagens recentes e até seis chunks recuperados.
 

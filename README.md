@@ -19,6 +19,7 @@ Backend greenfield para o atendimento da Bioecos com WhatsApp, Débora, base de 
 - API administrativa mínima para dashboard, contato, pipeline e pausa;
 - painel operacional autenticado para configurar a chave OpenAI, monitorar serviços e gerar o QR Code do WhatsApp;
 - embeddings automáticos após cadastrar a chave e na inicialização;
+- lista persistente de números ignorados, com CRUD no dashboard e bloqueio antes da fila, IA, lead e follow-up;
 - exportação e exclusão de dados de lead, retenção configurável e backups diários;
 - cenários de homologação do atendimento, da indisponibilidade da IA e do webhook.
 
@@ -129,8 +130,8 @@ O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. A im
 git clone https://github.com/nlsoarez/bioecos-whatsapp.git /opt/bioecos-build
 cd /opt/bioecos-build
 git checkout --detach COMMIT_REVISADO
-docker build --pull=false --build-arg BUILD_REVISION=COMMIT_REVISADO -t bioecos-whatsapp:0.2.4-security .
-docker build --pull=false -f Dockerfile.backup -t bioecos-backup:0.2.4-security .
+docker build --pull=false --build-arg BUILD_REVISION=COMMIT_REVISADO -t bioecos-whatsapp:0.3.0-ignored-numbers .
+docker build --pull=false -f Dockerfile.backup -t bioecos-backup:0.3.0-ignored-numbers .
 ```
 
 As imagens-base são fixadas por digest. O Compose usa `pull_policy: never`, filesystem somente leitura, remoção de capabilities, limite de processos, rede interna e `no-new-privileges`. A única tarefa root é o inicializador sem rede que ajusta a propriedade dos dois volumes graváveis.

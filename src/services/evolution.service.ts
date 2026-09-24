@@ -1,4 +1,6 @@
 import type { Env } from "../config/env.js";
+import { normalizePhone } from "../domain/phone.js";
+export { normalizePhone } from "../domain/phone.js";
 import type { InboundMessage, OutboundWebhookMessage } from "../domain/types.js";
 
 export interface SendResult {
@@ -209,13 +211,6 @@ export class EvolutionService implements MessageSender {
 
 function normalizeEvent(event: unknown): string {
   return String(event).toUpperCase().replace(/[.-]/g, "_");
-}
-
-export function normalizePhone(input: string): string {
-  const jid = input.split("@")[0] ?? input;
-  const digits = jid.replace(/\D/g, "");
-  if (digits.length < 10 || digits.length > 15) throw new Error("Número de telefone inválido");
-  return digits;
 }
 
 function messageText(message: Record<string, unknown>): string | null {

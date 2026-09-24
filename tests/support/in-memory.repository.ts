@@ -2,9 +2,10 @@ import type { AllowedTag, PipelineStage } from "../../src/domain/constants.js";
 import type {
   ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
   IngestResult, KnowledgeHit, LeadAssessment, LeadTemperature, MonthlyFollowupCandidate,
-  MonthlyFollowupSettings, QualificationStep,
+  MonthlyFollowupSettings, QualificationStep, IgnoredPhoneNumber, IgnoredPhoneNumberInput,
 } from "../../src/domain/types.js";
-import type { BioecosRepository, ContactUpdate } from "../../src/repositories/bioecos.repository.js";
+import { DuplicateIgnoredPhoneError, type BioecosRepository, type ContactUpdate } from "../../src/repositories/bioecos.repository.js";
+import { normalizePhone } from "../../src/domain/phone.js";
 
 export class InMemoryRepository implements BioecosRepository {
   context: ContactContext = {
@@ -29,8 +30,42 @@ export class InMemoryRepository implements BioecosRepository {
   monthlyFailures: Array<{ candidate: MonthlyFollowupCandidate; error: string }> = [];
   assessments: LeadAssessment[] = [];
   notifications: CoordinatorNotificationRecord[] = [];
+  ignoredNumbers: IgnoredPhoneNumber[] = [];
 
   async health() { return true; }
+  async isPhoneIgnored(phone: string) {
+    const normalized = normalizePhone(phone);
+    return this.ignoredNumbers.some((item) => item.active && item.phoneNumber === normalized);
+  }
+  async listIgnoredPhoneNumbers(search = "") {
+    const value = search.toLocaleLowerCase("pt-BR");
+    return this.ignoredNumbers.filter((item) => !value || item.phoneNumber.includes(search.replace(/\D/g, ""))
+      || item.name?.toLocaleLowerCase("pt-BR").includes(value) || item.note?.toLocaleLowerCase("pt-BR").includes(value));
+  }
+  async createIgnoredPhoneNumber(input: IgnoredPhoneNumberInput, _actor: string) {
+    const phoneNumber = normalizePhone(input.phoneNumber);
+    if (this.ignoredNumbers.some((item) => item.phoneNumber === phoneNumber)) throw new DuplicateIgnoredPhoneError();
+    const now = new Date().toISOString();
+    const item = { id: `ignored-${this.ignoredNumbers.length + 1}`, ...input, phoneNumber, createdAt: now, updatedAt: now };
+    this.ignoredNumbers.push(item);
+    return item;
+  }
+  async updateIgnoredPhoneNumber(id: string, input: IgnoredPhoneNumberInput, _actor: string) {
+    const item = this.ignoredNumbers.find((candidate) => candidate.id === id);
+    if (!item) return null;
+    const phoneNumber = normalizePhone(input.phoneNumber);
+    if (this.ignoredNumbers.some((candidate) => candidate.id !== id && candidate.phoneNumber === phoneNumber)) {
+      throw new DuplicateIgnoredPhoneError();
+    }
+    Object.assign(item, input, { phoneNumber, updatedAt: new Date().toISOString() });
+    return item;
+  }
+  async deleteIgnoredPhoneNumber(id: string, _actor: string) {
+    const index = this.ignoredNumbers.findIndex((item) => item.id === id);
+    if (index < 0) return false;
+    this.ignoredNumbers.splice(index, 1);
+    return true;
+  }
   async ingestInbound(message: InboundMessage): Promise<IngestResult> {
     const duplicate = this.seen.has(message.externalMessageId);
     this.seen.add(message.externalMessageId);

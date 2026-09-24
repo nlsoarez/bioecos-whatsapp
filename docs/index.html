@@ -64,6 +64,7 @@
         <button class="nav-item" data-section="leads"><span>02</span>Leads</button>
         <button class="nav-item" data-section="integrations"><span>03</span>Integrações</button>
         <button class="nav-item" data-section="conversations"><span>04</span>Atendimentos</button>
+        <button class="nav-item" data-section="ignored-numbers"><span>05</span>Números ignorados</button>
       </nav>
       <div class="sidebar-foot">
         <div class="operator"><span class="operator-avatar">O</span><div><strong id="operator-name">Operador</strong><small>Sessão protegida</small></div></div>
@@ -177,10 +178,37 @@
         <div class="section-title"><span class="page-kicker">Monitoramento</span><h2>Atendimentos recentes</h2><p>Visão operacional das conversas processadas pela automação.</p></div>
         <article class="panel"><div id="conversation-list-full" class="conversation-list"><p class="empty-state">Nenhuma conversa registrada.</p></div></article>
       </section>
+
+      <section id="section-ignored-numbers" class="dashboard-section" hidden>
+        <div class="section-title"><span class="page-kicker">Proteção da automação</span><h2>Números ignorados</h2><p>Números ativos nesta lista não geram lead, resposta, IA ou acompanhamento automático.</p></div>
+        <div class="ignored-layout">
+          <article class="panel">
+            <div class="panel-heading"><div><span class="panel-kicker">Cadastro protegido</span><h2 id="ignored-form-title">Adicionar número</h2></div></div>
+            <form id="ignored-number-form">
+              <input id="ignored-number-id" type="hidden">
+              <label for="ignored-phone">Número com DDD ou DDI</label>
+              <input id="ignored-phone" inputmode="tel" autocomplete="tel" placeholder="+55 21 99999-9999" required>
+              <label for="ignored-name">Nome ou identificação <span class="optional-label">opcional</span></label>
+              <input id="ignored-name" maxlength="100" placeholder="Ex.: Helder">
+              <label for="ignored-note">Observação <span class="optional-label">opcional</span></label>
+              <textarea id="ignored-note" maxlength="500" rows="4" placeholder="Ex.: Número pessoal — não automatizar"></textarea>
+              <label class="checkbox-field"><input id="ignored-active" type="checkbox" checked><span>Bloqueio ativo</span></label>
+              <div class="form-actions"><button id="save-ignored-number" class="primary-action" type="submit">Adicionar número</button><button id="cancel-ignored-edit" class="secondary-action" type="button" hidden>Cancelar edição</button></div>
+              <p id="ignored-form-feedback" class="inline-feedback" role="status"></p>
+            </form>
+          </article>
+          <article class="panel ignored-list-panel">
+            <div class="panel-heading"><div><span class="panel-kicker">Lista da conta</span><h2>Números protegidos</h2></div><span id="ignored-count" class="badge neutral">0</span></div>
+            <label for="ignored-search">Pesquisar</label>
+            <input id="ignored-search" type="search" maxlength="100" placeholder="Número, nome ou observação">
+            <div id="ignored-number-list" class="ignored-number-list"><p class="empty-state">Nenhum número cadastrado.</p></div>
+          </article>
+        </div>
+      </section>
     </main>
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20260827-ai-only" defer></script>
+  <script src="assets/app.js?v=20260924-ignored-numbers" defer></script>
 </body>
 </html>

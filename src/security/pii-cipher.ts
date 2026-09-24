@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
+import { normalizePhone } from "../domain/phone.js";
 
 const PREFIX = "enc:v1";
 const LEGACY_PREFIX = "v1";
@@ -60,8 +61,4 @@ export class PiiCipher {
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
   }
-}
-
-function normalizePhone(phone: string): string {
-  return phone.replace(/\D/g, "");
 }

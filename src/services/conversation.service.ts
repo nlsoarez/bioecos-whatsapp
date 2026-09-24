@@ -31,7 +31,8 @@ export class ConversationService {
     private readonly notifier: CoordinatorNotifier = new NoopCoordinatorNotifier(),
   ) {}
 
-  async handle(message: InboundMessage): Promise<{ status: "duplicate" | "paused" | "responded"; response?: string }> {
+  async handle(message: InboundMessage): Promise<{ status: "ignored" | "duplicate" | "paused" | "responded"; response?: string }> {
+    if (await this.repository.isPhoneIgnored(message.phone)) return { status: "ignored" };
     const ingestion = await this.repository.ingestInbound(message);
     if (ingestion.duplicate) return { status: "duplicate" };
 

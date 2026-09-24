@@ -2,8 +2,12 @@ import type { AllowedTag, PipelineStage } from "../domain/constants.js";
 import type {
   ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
   IngestResult, KnowledgeHit, LeadAssessment, LeadTemperature, MonthlyFollowupCandidate,
-  MonthlyFollowupSettings, QualificationStep,
+  MonthlyFollowupSettings, QualificationStep, IgnoredPhoneNumber, IgnoredPhoneNumberInput,
 } from "../domain/types.js";
+
+export class DuplicateIgnoredPhoneError extends Error {
+  constructor() { super("Este número já está cadastrado"); }
+}
 
 export type ContactUpdate = Partial<{
   name: string;
@@ -23,6 +27,11 @@ export type ContactUpdate = Partial<{
 
 export interface BioecosRepository {
   health(): Promise<boolean>;
+  isPhoneIgnored(phone: string): Promise<boolean>;
+  listIgnoredPhoneNumbers(search?: string): Promise<IgnoredPhoneNumber[]>;
+  createIgnoredPhoneNumber(input: IgnoredPhoneNumberInput, actor: string): Promise<IgnoredPhoneNumber>;
+  updateIgnoredPhoneNumber(id: string, input: IgnoredPhoneNumberInput, actor: string): Promise<IgnoredPhoneNumber | null>;
+  deleteIgnoredPhoneNumber(id: string, actor: string): Promise<boolean>;
   ingestInbound(message: InboundMessage): Promise<IngestResult>;
   getRecentMessages(conversationId: string, limit: number): Promise<ChatMessage[]>;
   getContext(conversationId: string): Promise<ContactContext>;

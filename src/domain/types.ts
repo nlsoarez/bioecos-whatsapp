@@ -70,6 +70,23 @@ export interface MonthlyFollowupSettings {
   scheduleDays: number[];
 }
 
+export interface IgnoredPhoneNumber {
+  id: string;
+  phoneNumber: string;
+  name: string | null;
+  note: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IgnoredPhoneNumberInput {
+  phoneNumber: string;
+  name: string | null;
+  note: string | null;
+  active: boolean;
+}
+
 export interface CoordinatorNotificationRecord {
   id: string;
   contactId: string;

@@ -66,6 +66,14 @@ describe("Evolution webhook v2", () => {
     expect(() => normalizePhone("123")).toThrow("inválido");
   });
 
+  it("converte máscaras brasileiras e DDI para o mesmo número canônico", () => {
+    const canonical = "5521999999999";
+    expect(normalizePhone("(21) 99999-9999")).toBe(canonical);
+    expect(normalizePhone("21999999999")).toBe(canonical);
+    expect(normalizePhone("+55 21 99999-9999")).toBe(canonical);
+    expect(normalizePhone("5521999999999@s.whatsapp.net")).toBe(canonical);
+  });
+
   it("configura e confirma o recebimento com segredo no cabeçalho", async () => {
     const env = loadEnv({
       DATABASE_URL: "postgresql://test:test@localhost/test",

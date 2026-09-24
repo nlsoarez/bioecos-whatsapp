@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Env } from "../config/env.js";
 import { PIPELINE_STAGES } from "../domain/constants.js";
-import type { BioecosRepository } from "../repositories/bioecos.repository.js";
+import { DuplicateIgnoredPhoneError, type BioecosRepository } from "../repositories/bioecos.repository.js";
 import {
   authenticateCredentials, createSessionToken, dashboardUnauthorized, requireDashboardSession, secureSecretEqual,
 } from "../security/dashboard-auth.js";
@@ -93,6 +93,9 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const inbound = parseEvolutionWebhook(request.body);
     const outbound = inbound ? null : parseEvolutionOutboundWebhook(request.body);
     if (!inbound && !outbound) return reply.code(202).send({ accepted: false, reason: "ignored_event" });
+    if (await repository.isPhoneIgnored((inbound ?? outbound!).phone)) {
+      return reply.code(202).send({ accepted: false, status: "ignored" });
+    }
     if (dependencies.webhookJobs) {
       const accepted = await dependencies.webhookJobs.enqueue(inbound
         ? { kind: "inbound", message: inbound }
@@ -218,6 +221,51 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     await requireSession(request);
     await secrets.delete("COORDINATOR_WHATSAPP");
     return { configured: false };
+  });
+
+  const ignoredPhoneSchema = z.object({
+    phoneNumber: z.string().min(10).max(40),
+    name: z.string().trim().max(100).nullable().default(null),
+    note: z.string().trim().max(500).nullable().default(null),
+    active: z.boolean().default(true),
+  });
+
+  app.get("/dashboard/settings/ignored-numbers", async (request) => {
+    await requireSession(request);
+    const { search } = z.object({ search: z.string().trim().max(100).default("") }).parse(request.query);
+    return { ignoredNumbers: await repository.listIgnoredPhoneNumbers(search) };
+  });
+
+  app.post("/dashboard/settings/ignored-numbers", async (request, reply) => {
+    const session = await requireSession(request);
+    const values = ignoredPhoneSchema.parse(request.body);
+    try {
+      const ignoredNumber = await repository.createIgnoredPhoneNumber(values, `dashboard:${session.sub}`);
+      return reply.code(201).send({ ignoredNumber });
+    } catch (error) {
+      if (error instanceof DuplicateIgnoredPhoneError) return reply.code(409).send({ error: error.message });
+      if (error instanceof Error && error.message.includes("telefone inválido")) return reply.code(400).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>("/dashboard/settings/ignored-numbers/:id", async (request, reply) => {
+    const session = await requireSession(request);
+    const values = ignoredPhoneSchema.parse(request.body);
+    try {
+      const ignoredNumber = await repository.updateIgnoredPhoneNumber(request.params.id, values, `dashboard:${session.sub}`);
+      return ignoredNumber ? { ignoredNumber } : reply.code(404).send({ error: "Número ignorado não encontrado" });
+    } catch (error) {
+      if (error instanceof DuplicateIgnoredPhoneError) return reply.code(409).send({ error: error.message });
+      if (error instanceof Error && error.message.includes("telefone inválido")) return reply.code(400).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>("/dashboard/settings/ignored-numbers/:id", async (request, reply) => {
+    const session = await requireSession(request);
+    const deleted = await repository.deleteIgnoredPhoneNumber(request.params.id, `dashboard:${session.sub}`);
+    return deleted ? { deleted: true } : reply.code(404).send({ error: "Número ignorado não encontrado" });
   });
 
   app.get("/dashboard/leads", async (request) => {
