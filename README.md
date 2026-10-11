@@ -44,7 +44,7 @@ WhatsApp
 
 Detalhes em [docs/architecture.md](docs/architecture.md).
 
-O portal técnico estático fica em `docs/` e é publicado pelo GitHub Pages diretamente da branch `main`, sem arquivo de workflow ou Action personalizada.
+O portal técnico fica em `docs/` e é servido exclusivamente pelo backend no VPS Hostinger. O projeto não publica nem depende de GitHub Pages ou GitHub Actions.
 
 ## Execução local
 
@@ -130,7 +130,7 @@ O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. A im
 mkdir -p /docker/bioecos/releases/REVISAO
 tar -xzf /tmp/bioecos-REVISAO.tgz -C /docker/bioecos/releases/REVISAO
 cd /docker/bioecos/releases/REVISAO
-docker build --pull=false --build-arg BUILD_REVISION=REVISAO -t bioecos-whatsapp:0.3.2-qr-refresh-secure .
+docker build --pull=false --build-arg BUILD_REVISION=REVISAO -t bioecos-whatsapp:0.3.3-social-preview-secure .
 ```
 
 As imagens-base são fixadas por digest. O Compose usa `pull_policy: never`, filesystem somente leitura, remoção de capabilities, limite de processos, rede interna e `no-new-privileges`. A única tarefa root é o inicializador sem rede que ajusta a propriedade dos dois volumes graváveis.

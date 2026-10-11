@@ -34,6 +34,8 @@ interface Dependencies {
 const PORTAL_ROOT = resolve(process.cwd(), "docs");
 const PORTAL_ASSETS = new Map([
   ["app.js", "application/javascript; charset=utf-8"],
+  ["bioecos-favicon.ico", "image/x-icon"],
+  ["bioecos-share.jpg", "image/jpeg"],
   ["config.js", "application/javascript; charset=utf-8"],
   ["frame-guard.js", "application/javascript; charset=utf-8"],
   ["styles.css", "text/css; charset=utf-8"],
@@ -69,6 +71,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.get("/live", async () => ({ status: "ok", backend: true }));
 
+  app.get("/", async (_request, reply) => sendPortalFile(reply, "index.html", "text/html; charset=utf-8"));
   app.get("/portal", async (_request, reply) => sendPortalFile(reply, "index.html", "text/html; charset=utf-8"));
   app.get("/portal/", async (_request, reply) => sendPortalFile(reply, "index.html", "text/html; charset=utf-8"));
   app.get<{ Params: { file: string } }>("/portal/assets/:file", async (request, reply) => {

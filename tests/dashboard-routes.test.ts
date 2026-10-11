@@ -58,16 +58,25 @@ async function setup() {
 describe("rotas do dashboard", () => {
   it("serve o portal no próprio backend sem depender do GitHub Pages", async () => {
     const { app } = await setup();
+    const shortPage = await app.inject({ method: "GET", url: "/" });
     const page = await app.inject({ method: "GET", url: "/portal/" });
+    expect(shortPage.statusCode).toBe(200);
     expect(page.statusCode).toBe(200);
     expect(page.headers["content-type"]).toContain("text/html");
     expect(page.headers["content-security-policy"]).toContain("connect-src 'self'");
     expect(page.body).toContain('<base href="/bioecos/portal/">');
+    expect(page.body).toContain('property="og:title" content="Bioecos — Painel da Automação"');
+    expect(page.body).toContain('property="og:url" content="https://evolution.179-198-124-8.sslip.io/bioecos/"');
+    expect(page.body).toContain('property="og:image" content="https://evolution.179-198-124-8.sslip.io/bioecos/portal/assets/bioecos-share.jpg"');
     expect(page.body).not.toContain("github.io");
 
     const script = await app.inject({ method: "GET", url: "/portal/assets/app.js" });
     expect(script.statusCode).toBe(200);
     expect(script.headers["content-type"]).toContain("application/javascript");
+    const shareImage = await app.inject({ method: "GET", url: "/portal/assets/bioecos-share.jpg" });
+    expect(shareImage.statusCode).toBe(200);
+    expect(shareImage.headers["content-type"]).toContain("image/jpeg");
+    expect(shareImage.rawPayload.byteLength).toBeGreaterThan(10_000);
     expect((await app.inject({ method: "GET", url: "/portal/assets/unknown.js" })).statusCode).toBe(404);
     await app.close();
   });
