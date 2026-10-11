@@ -1,6 +1,8 @@
 const configuredBaseUrl = String(window.BIOECOS_CONFIG?.apiBaseUrl ?? "").replace(/\/$/, "");
 const API_BASE_URL = configuredBaseUrl || (location.hostname === "localhost" ? "http://localhost:3000" : "");
 const SESSION_KEY = "bioecos_dashboard_session";
+const QR_REFRESH_INTERVAL_MS = 4_000;
+const QR_SESSION_TIMEOUT_MS = 2 * 60_000;
 
 const byId = (id) => document.getElementById(id);
 const loginView = byId("login-view");
@@ -9,6 +11,14 @@ const loginForm = byId("login-form");
 const loginError = byId("login-error");
 const loginSubmit = byId("login-submit");
 let refreshTimer = null;
+let qrRefreshTimer = null;
+let qrCountdownTimer = null;
+let qrSessionStartedAt = 0;
+let qrExpiresAt = 0;
+let qrCurrentBase64 = "";
+let qrSessionActive = false;
+let qrRefreshInFlight = false;
+let qrSessionGeneration = 0;
 let openedHash = "";
 let ignoredNumbers = [];
 
@@ -109,6 +119,7 @@ function showDashboard() {
 }
 
 function logout() {
+  stopQrSession();
   sessionStorage.removeItem(SESSION_KEY);
   clearInterval(refreshTimer);
   dashboardView.hidden = true;
@@ -219,14 +230,18 @@ function renderOverview(overview) {
   setBadge("integration-wa-state", whatsappOperational ? "Operacional" : (whatsappConnected ? "Webhook pendente" : "Desconectado"), whatsappOperational ? "ok" : (whatsappConnected ? "warning" : "neutral"));
   byId("whatsapp-webhook-status").textContent = services.whatsapp?.webhook?.message ?? "Recebimento ainda não verificado";
   byId("repair-webhook").hidden = !whatsappConnected || webhookHealthy;
-  byId("whatsapp-disconnected").hidden = whatsappConnected;
+  if (whatsappConnected && qrSessionActive) {
+    stopQrSession();
+    setFeedback(byId("whatsapp-feedback"), "WhatsApp conectado. O QR Code foi removido.", "success");
+  }
+  byId("whatsapp-disconnected").hidden = whatsappConnected || qrSessionActive;
 
   const aiBadgeState = aiOperational ? "ok" : (aiHealth.state === "insufficient_quota" || aiHealth.state === "invalid_key" ? "danger" : "warning");
   setBadge("ai-badge", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Obrigatória", aiBadgeState);
   setBadge("integration-ai-state", aiConfigured ? (aiLabels[aiHealth.state] ?? "Requer atenção") : "Obrigatória", aiBadgeState);
   byId("remove-api-key").hidden = !aiConfigured;
-  byId("connect-whatsapp").disabled = whatsappConnected;
-  byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : "Gerar QR Code";
+  byId("connect-whatsapp").disabled = whatsappConnected || qrSessionActive;
+  byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : (qrSessionActive ? "Aguardando conexão..." : "Gerar QR Code");
   setBadge("integration-coordinator-state", services.coordinator?.configured ? "Configurado" : "Pendente", services.coordinator?.configured ? "ok" : "warning");
 
   renderPipeline(Array.isArray(metrics.stages) ? metrics.stages : []);
@@ -477,19 +492,119 @@ async function removeOpenAIKey() {
 async function connectWhatsApp() {
   const button = byId("connect-whatsapp");
   const feedback = byId("whatsapp-feedback");
+  stopQrSession();
+  qrSessionActive = true;
+  qrSessionStartedAt = Date.now();
+  const generation = qrSessionGeneration;
   button.disabled = true;
   button.textContent = "Gerando QR Code...";
   try {
     const result = await api("/dashboard/whatsapp/connect", { method: "POST" });
-    byId("qr-image").src = result.base64;
-    byId("qr-area").hidden = false;
+    if (!qrSessionActive || generation !== qrSessionGeneration) return;
+    showQrCode(result);
     byId("whatsapp-disconnected").hidden = true;
-    setFeedback(feedback, "Escaneie o QR Code antes que ele expire.", "success");
+    setFeedback(feedback, "Escaneie o QR Code. O portal renovará o código automaticamente.", "success");
+    button.textContent = "Aguardando conexão...";
+    startQrTimers();
   } catch (error) {
+    if (generation !== qrSessionGeneration) return;
+    stopQrSession();
     setFeedback(feedback, error.message, "error");
     button.disabled = false;
-  } finally {
     button.textContent = "Gerar novo QR Code";
+  }
+}
+
+function startQrTimers() {
+  clearTimeout(qrRefreshTimer);
+  clearInterval(qrCountdownTimer);
+  qrCountdownTimer = setInterval(updateQrCountdown, 1_000);
+  updateQrCountdown();
+  qrRefreshTimer = setTimeout(() => void refreshQrSession(), QR_REFRESH_INTERVAL_MS);
+}
+
+async function refreshQrSession() {
+  if (!qrSessionActive || qrRefreshInFlight) return;
+  if (Date.now() - qrSessionStartedAt >= QR_SESSION_TIMEOUT_MS) {
+    stopQrSession();
+    setFeedback(byId("whatsapp-feedback"), "Tempo de conexão encerrado. Gere um novo QR Code para tentar novamente.", "error");
+    return;
+  }
+
+  const generation = qrSessionGeneration;
+  qrRefreshInFlight = true;
+  try {
+    const result = await api("/dashboard/whatsapp/qr");
+    if (!qrSessionActive || generation !== qrSessionGeneration) return;
+    if (result.connection?.state === "open") {
+      stopQrSession();
+      setFeedback(byId("whatsapp-feedback"), "WhatsApp conectado. O QR Code foi removido.", "success");
+      await refreshOverview();
+      return;
+    }
+    if (result.qrCode) showQrCode(result.qrCode);
+  } catch (error) {
+    if (generation !== qrSessionGeneration) return;
+    setFeedback(byId("whatsapp-feedback"), `${error.message} Tentando novamente...`, "error");
+  } finally {
+    if (generation !== qrSessionGeneration) return;
+    qrRefreshInFlight = false;
+    if (qrSessionActive) {
+      clearTimeout(qrRefreshTimer);
+      qrRefreshTimer = setTimeout(() => void refreshQrSession(), QR_REFRESH_INTERVAL_MS);
+    }
+  }
+}
+
+function showQrCode(qrCode) {
+  const remainingMs = Number(qrCode.remainingMs);
+  if (!Number.isFinite(remainingMs) || remainingMs < 0) throw new Error("A API não informou a validade do QR Code");
+
+  qrExpiresAt = Date.now() + remainingMs;
+  const image = byId("qr-image");
+  if (qrCode.base64 !== qrCurrentBase64) {
+    qrCurrentBase64 = qrCode.base64;
+    image.src = qrCode.base64;
+  }
+  byId("qr-area").hidden = false;
+  updateQrCountdown();
+}
+
+function updateQrCountdown() {
+  if (!qrSessionActive) return;
+  const remainingMs = qrExpiresAt - Date.now();
+  const image = byId("qr-image");
+  const countdown = byId("qr-countdown");
+  if (remainingMs <= 0) {
+    image.hidden = true;
+    image.removeAttribute("src");
+    countdown.textContent = "QR Code expirado — aguardando renovação automática...";
+    return;
+  }
+  image.hidden = false;
+  countdown.textContent = `Válido por até ${Math.ceil(remainingMs / 1_000)}s · renovação automática ativa`;
+}
+
+function stopQrSession() {
+  qrSessionGeneration += 1;
+  qrSessionActive = false;
+  qrRefreshInFlight = false;
+  qrSessionStartedAt = 0;
+  qrExpiresAt = 0;
+  qrCurrentBase64 = "";
+  clearTimeout(qrRefreshTimer);
+  clearInterval(qrCountdownTimer);
+  qrRefreshTimer = null;
+  qrCountdownTimer = null;
+  const image = byId("qr-image");
+  image.hidden = true;
+  image.removeAttribute("src");
+  byId("qr-area").hidden = true;
+  byId("qr-countdown").textContent = "QR Code temporário";
+  const button = byId("connect-whatsapp");
+  if (button) {
+    button.disabled = false;
+    button.textContent = "Gerar QR Code";
   }
 }
 

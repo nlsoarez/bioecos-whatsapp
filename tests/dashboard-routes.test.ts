@@ -56,6 +56,22 @@ async function setup() {
 }
 
 describe("rotas do dashboard", () => {
+  it("serve o portal no próprio backend sem depender do GitHub Pages", async () => {
+    const { app } = await setup();
+    const page = await app.inject({ method: "GET", url: "/portal/" });
+    expect(page.statusCode).toBe(200);
+    expect(page.headers["content-type"]).toContain("text/html");
+    expect(page.headers["content-security-policy"]).toContain("connect-src 'self'");
+    expect(page.body).toContain('<base href="/bioecos/portal/">');
+    expect(page.body).not.toContain("github.io");
+
+    const script = await app.inject({ method: "GET", url: "/portal/assets/app.js" });
+    expect(script.statusCode).toBe(200);
+    expect(script.headers["content-type"]).toContain("application/javascript");
+    expect((await app.inject({ method: "GET", url: "/portal/assets/unknown.js" })).statusCode).toBe(404);
+    await app.close();
+  });
+
   it("protege o overview e autentica o operador", async () => {
     const { app } = await setup();
     expect((await app.inject({ method: "GET", url: "/dashboard/overview" })).statusCode).toBe(401);
@@ -113,6 +129,16 @@ describe("rotas do dashboard", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().base64).toContain("data:image/png;base64,");
+    expect(Date.parse(response.json().expiresAt) - Date.parse(response.json().issuedAt)).toBe(20_000);
+
+    const refreshed = await app.inject({
+      method: "GET",
+      url: "/dashboard/whatsapp/qr",
+      headers: { authorization: `Bearer ${login.json().token as string}` },
+    });
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.json()).toMatchObject({ connection: { state: "close" }, qrCode: { base64: "data:image/png;base64,AAAA" } });
+    expect(refreshed.json().qrCode.expiresAt).toBe(response.json().expiresAt);
     await app.close();
   });
 

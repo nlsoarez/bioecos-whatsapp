@@ -135,6 +135,7 @@ footer { width: min(100%, 460px); margin-top: 54px; color: #829089; font-size: .
 .whatsapp-state p { margin: 5px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.5; }
 .qr-area { display: grid; grid-template-columns: 132px 1fr; gap: 20px; align-items: center; margin-top: 18px; padding: 16px; background: #f6f8f5; border-radius: 8px; }
 .qr-area img { display: block; width: 132px; height: 132px; background: white; border: 8px solid white; }
+.qr-area img[hidden] { display: none; }
 .qr-area strong { color: var(--forest); }
 .qr-area p { color: var(--muted); font-size: .73rem; line-height: 1.5; }
 .qr-area small { color: #a16c0b; font-size: .68rem; }

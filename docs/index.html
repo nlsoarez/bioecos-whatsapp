@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/bioecos/portal/">
   <meta name="description" content="Painel de monitoramento da automação WhatsApp Bioecos.">
   <meta name="theme-color" content="#0b211a">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://evolution.179-198-124-8.sslip.io; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests">
-  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests">
   <script src="assets/frame-guard.js"></script>
   <title>Bioecos — Painel da Automação</title>
   <link rel="stylesheet" href="assets/styles.css?v=20260924-ignored-numbers">
@@ -115,7 +115,7 @@
               <div><strong>Conecte o número da Bioecos</strong><p>A chave OpenAI operacional é necessária para o atendimento automático por IA.</p></div>
             </div>
             <div id="qr-area" class="qr-area" hidden>
-              <img id="qr-image" alt="QR Code para conectar o WhatsApp">
+              <img id="qr-image" alt="QR Code para conectar o WhatsApp" hidden>
               <div><strong>Escaneie pelo WhatsApp</strong><p>Configurações → Dispositivos conectados → Conectar dispositivo.</p><small id="qr-countdown">QR Code temporário</small></div>
             </div>
             <button id="connect-whatsapp" class="primary-action wide-action" type="button">Gerar QR Code</button>
@@ -209,6 +209,6 @@
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20260924-ignored-numbers" defer></script>
+  <script src="assets/app.js?v=20261011-qr-refresh" defer></script>
 </body>
 </html>

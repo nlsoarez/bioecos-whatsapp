@@ -41,7 +41,7 @@ services:
       retries: 12
 
   bioecos-api:
-    image: ${BIOECOS_API_IMAGE:-bioecos-whatsapp:0.3.0-ignored-numbers}
+    image: ${BIOECOS_API_IMAGE:-bioecos-whatsapp:0.3.1-qr-refresh-vps}
     pull_policy: never
     container_name: bioecos-api
     restart: unless-stopped
@@ -68,7 +68,7 @@ services:
       NODE_ENV: production
       PORT: 3000
       LOG_LEVEL: info
-      ADMIN_CORS_ORIGINS: https://nlsoarez.github.io
+      ADMIN_CORS_ORIGINS: https://evolution.179-198-124-8.sslip.io
       DASHBOARD_USERNAME: ${BIOECOS_DASHBOARD_USERNAME:-admin}
       DASHBOARD_PASSWORD: ${BIOECOS_DASHBOARD_PASSWORD:?Defina BIOECOS_DASHBOARD_PASSWORD}
       DASHBOARD_SESSION_SECRET: ${BIOECOS_DASHBOARD_SESSION_SECRET:?Defina BIOECOS_DASHBOARD_SESSION_SECRET}
@@ -100,7 +100,7 @@ services:
       EVOLUTION_MAX_RETRIES: 3
       ADMIN_API_KEY: ${BIOECOS_ADMIN_API_KEY:?Defina BIOECOS_ADMIN_API_KEY}
       PII_ENCRYPTION_KEY: ${BIOECOS_PII_ENCRYPTION_KEY:?Defina BIOECOS_PII_ENCRYPTION_KEY}
-      DASHBOARD_PUBLIC_URL: https://nlsoarez.github.io/bioecos-whatsapp/
+      DASHBOARD_PUBLIC_URL: https://evolution.179-198-124-8.sslip.io/bioecos/portal/
     networks:
       - bioecos_internal
       - bioecos_edge

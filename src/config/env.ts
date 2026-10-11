@@ -43,7 +43,7 @@ const schema = z.object({
   EVOLUTION_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(3),
   ADMIN_API_KEY: z.string().min(12),
   PII_ENCRYPTION_KEY: z.string().default(""),
-  DASHBOARD_PUBLIC_URL: z.url().default("https://nlsoarez.github.io/bioecos-whatsapp/"),
+  DASHBOARD_PUBLIC_URL: z.url().default("https://evolution.179-198-124-8.sslip.io/bioecos/portal/"),
 }).superRefine((env, context) => {
   if (env.NODE_ENV !== "production") return;
   for (const key of ["EVOLUTION_API_KEY", "EVOLUTION_WEBHOOK_SECRET", "PII_ENCRYPTION_KEY", "DASHBOARD_PASSWORD", "DASHBOARD_SESSION_SECRET"] as const) {

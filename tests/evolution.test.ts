@@ -101,6 +101,41 @@ describe("Evolution webhook v2", () => {
     expect(configuredBody).toMatchObject({ webhook: { headers: { "x-webhook-secret": "webhook-secret" } } });
   });
 
+  it("mantém a validade da mesma geração e renova o prazo somente quando o QR muda", async () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgresql://test:test@localhost/test",
+      EVOLUTION_API_URL: "https://evolution.example.com",
+      EVOLUTION_API_KEY: "evolution-secret",
+      EVOLUTION_INSTANCE_NAME: "bioecos",
+      ADMIN_API_KEY: "admin-secret-key",
+    });
+    const qrCodes = [
+      "data:image/png;base64,GERACAO1",
+      "data:image/png;base64,GERACAO1",
+      "data:image/png;base64,GERACAO2",
+    ];
+    let requestIndex = 0;
+    let now = Date.parse("2026-10-11T12:00:00.000Z");
+    const request = async () => new Response(JSON.stringify({ base64: qrCodes[requestIndex++], count: requestIndex }), { status: 200 });
+    const evolution = new EvolutionService(env, request as typeof fetch, () => now);
+
+    const first = await evolution.refreshQrCode();
+    now += 10_000;
+    const repeated = await evolution.refreshQrCode();
+    now += 15_000;
+    const renewed = await evolution.refreshQrCode();
+
+    expect(repeated.issuedAt).toBe(first.issuedAt);
+    expect(repeated.expiresAt).toBe(first.expiresAt);
+    expect(repeated.remainingMs).toBe(10_000);
+    expect(Date.parse(first.expiresAt) - Date.parse(first.issuedAt)).toBe(20_000);
+    expect(first.remainingMs).toBe(20_000);
+    expect(renewed.base64).toContain("GERACAO2");
+    expect(renewed.issuedAt).not.toBe(first.issuedAt);
+    expect(renewed.remainingMs).toBe(20_000);
+    expect(Date.parse(renewed.expiresAt) - Date.parse(renewed.issuedAt)).toBe(20_000);
+  });
+
   it("envia texto no formato aceito pela Evolution v2 instalada", async () => {
     const env = loadEnv({
       DATABASE_URL: "postgresql://test:test@localhost/test",

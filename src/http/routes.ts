@@ -1,4 +1,6 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Env } from "../config/env.js";
 import { PIPELINE_STAGES } from "../domain/constants.js";
@@ -29,6 +31,23 @@ interface Dependencies {
   dashboardSessions?: DashboardSessionStore;
 }
 
+const PORTAL_ROOT = resolve(process.cwd(), "docs");
+const PORTAL_ASSETS = new Map([
+  ["app.js", "application/javascript; charset=utf-8"],
+  ["config.js", "application/javascript; charset=utf-8"],
+  ["frame-guard.js", "application/javascript; charset=utf-8"],
+  ["styles.css", "text/css; charset=utf-8"],
+]);
+
+async function sendPortalFile(reply: FastifyReply, file: string, contentType: string) {
+  const content = await readFile(resolve(PORTAL_ROOT, file));
+  return reply
+    .type(contentType)
+    .header("cache-control", "no-store, max-age=0")
+    .header("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+    .send(content);
+}
+
 function assertAdmin(request: FastifyRequest, env: Env): void {
   const supplied = request.headers["x-admin-key"];
   if (typeof supplied !== "string" || !secureSecretEqual(supplied, env.ADMIN_API_KEY)) {
@@ -49,6 +68,14 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   };
 
   app.get("/live", async () => ({ status: "ok", backend: true }));
+
+  app.get("/portal", async (_request, reply) => sendPortalFile(reply, "index.html", "text/html; charset=utf-8"));
+  app.get("/portal/", async (_request, reply) => sendPortalFile(reply, "index.html", "text/html; charset=utf-8"));
+  app.get<{ Params: { file: string } }>("/portal/assets/:file", async (request, reply) => {
+    const contentType = PORTAL_ASSETS.get(request.params.file);
+    if (!contentType) return reply.code(404).send({ error: "Arquivo não encontrado" });
+    return sendPortalFile(reply, `assets/${request.params.file}`, contentType);
+  });
 
   app.get("/health", async (_request, reply) => {
     let database = false;
@@ -338,6 +365,13 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   app.post("/dashboard/whatsapp/connect", async (request) => {
     await requireSession(request);
     return evolution.connect();
+  });
+
+  app.get("/dashboard/whatsapp/qr", async (request) => {
+    await requireSession(request);
+    const connection = await evolution.connectionState();
+    if (connection.state === "open") return { connection, qrCode: null };
+    return { connection, qrCode: await evolution.refreshQrCode() };
   });
 
   app.post("/dashboard/whatsapp/webhook", async (request) => {

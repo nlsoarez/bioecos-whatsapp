@@ -124,14 +124,13 @@ Os testes locais não chamam OpenAI nem Evolution. A homologação real ainda ex
 
 O arquivo `docker-compose.hostinger.yml` cria um projeto Docker isolado chamado `bioecos`, com rede, volumes e nomes de contêiner exclusivos. A API não publica porta direta; recebe tráfego apenas pelo proxy HTTPS já ligado à rede `bioecos_edge`.
 
-O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. A imagem deve ser construída manualmente no próprio VPS a partir de um commit revisado. O contêiner de produção não contém Git, não baixa a branch `main`, não instala dependências na inicialização e executa como usuário sem privilégios.
+O Gerenciador Docker da Hostinger não executa o `build` remoto do Compose. A imagem deve ser construída manualmente no próprio VPS a partir de um pacote de código revisado e transferido por canal seguro. O portal é servido pelo próprio backend em `/bioecos/portal/`; o projeto não depende do GitHub Pages. O contêiner de produção não contém Git, não baixa branches, não instala dependências na inicialização e executa como usuário sem privilégios.
 
 ```bash
-git clone https://github.com/nlsoarez/bioecos-whatsapp.git /opt/bioecos-build
-cd /opt/bioecos-build
-git checkout --detach COMMIT_REVISADO
-docker build --pull=false --build-arg BUILD_REVISION=COMMIT_REVISADO -t bioecos-whatsapp:0.3.0-ignored-numbers .
-docker build --pull=false -f Dockerfile.backup -t bioecos-backup:0.3.0-ignored-numbers .
+mkdir -p /docker/bioecos/releases/REVISAO
+tar -xzf /tmp/bioecos-REVISAO.tgz -C /docker/bioecos/releases/REVISAO
+cd /docker/bioecos/releases/REVISAO
+docker build --pull=false --build-arg BUILD_REVISION=REVISAO -t bioecos-whatsapp:0.3.1-qr-refresh-vps .
 ```
 
 As imagens-base são fixadas por digest. O Compose usa `pull_policy: never`, filesystem somente leitura, remoção de capabilities, limite de processos, rede interna e `no-new-privileges`. A única tarefa root é o inicializador sem rede que ajusta a propriedade dos dois volumes graváveis.

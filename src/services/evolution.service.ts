@@ -22,7 +22,12 @@ export interface EvolutionQrCode {
   base64: string;
   pairingCode: string | null;
   count: number;
+  issuedAt: string;
+  expiresAt: string;
+  remainingMs: number;
 }
+
+type EvolutionQrSnapshot = Omit<EvolutionQrCode, "remainingMs">;
 
 export interface EvolutionWebhookState {
   configured: boolean;
@@ -41,11 +46,17 @@ class EvolutionHttpError extends Error {
 const MAX_WEBHOOK_MESSAGE_CHARS = 4_096;
 const MAX_EXTERNAL_MESSAGE_ID_CHARS = 200;
 const MAX_PUSH_NAME_CHARS = 200;
+const QR_SAFE_DISPLAY_MS = 20_000;
 
 export class EvolutionService implements MessageSender {
   private readonly automatedOutbounds = new Map<string, number>();
+  private currentQr: EvolutionQrSnapshot | null = null;
 
-  constructor(private readonly env: Env, private readonly request: typeof fetch = fetch) {}
+  constructor(
+    private readonly env: Env,
+    private readonly request: typeof fetch = fetch,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   async sendText(phone: string, text: string): Promise<SendResult> {
     if (!this.env.EVOLUTION_API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
@@ -120,10 +131,12 @@ export class EvolutionService implements MessageSender {
     try {
       const response = await this.request(url, { headers: { apikey: this.env.EVOLUTION_API_KEY } });
       const result = await response.json().catch(() => ({})) as { instance?: { state?: unknown }; state?: unknown };
+      const state = String(result.instance?.state ?? result.state ?? (response.ok ? "unknown" : "unreachable"));
+      if (state === "open") this.currentQr = null;
       return {
         configured: true,
         reachable: response.ok,
-        state: String(result.instance?.state ?? result.state ?? (response.ok ? "unknown" : "unreachable")),
+        state,
       };
     } catch {
       return { configured: true, reachable: false, state: "unreachable" };
@@ -135,6 +148,12 @@ export class EvolutionService implements MessageSender {
   }
 
   async connect(): Promise<EvolutionQrCode> {
+    const qrCode = await this.refreshQrCode();
+    await this.configureWebhook();
+    return this.presentQrCode(qrCode);
+  }
+
+  async refreshQrCode(): Promise<EvolutionQrCode> {
     if (!this.env.EVOLUTION_API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
     const url = `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/instance/connect/${encodeURIComponent(this.env.EVOLUTION_INSTANCE_NAME)}`;
     const response = await this.request(url, { headers: { apikey: this.env.EVOLUTION_API_KEY } });
@@ -144,11 +163,23 @@ export class EvolutionService implements MessageSender {
     if (!base64.startsWith("data:image/png;base64,") || base64.length > 2_000_000) {
       throw new Error("A Evolution não retornou um QR Code válido");
     }
-    await this.configureWebhook();
-    return {
+    if (this.currentQr?.base64 === base64) return this.presentQrCode(this.currentQr);
+
+    const issuedAtMs = this.now();
+    this.currentQr = {
       base64,
       pairingCode: typeof result.pairingCode === "string" ? result.pairingCode : null,
       count: typeof result.count === "number" ? result.count : 0,
+      issuedAt: new Date(issuedAtMs).toISOString(),
+      expiresAt: new Date(issuedAtMs + QR_SAFE_DISPLAY_MS).toISOString(),
+    };
+    return this.presentQrCode(this.currentQr);
+  }
+
+  private presentQrCode(qrCode: EvolutionQrSnapshot): EvolutionQrCode {
+    return {
+      ...qrCode,
+      remainingMs: Math.max(0, Date.parse(qrCode.expiresAt) - this.now()),
     };
   }
 
