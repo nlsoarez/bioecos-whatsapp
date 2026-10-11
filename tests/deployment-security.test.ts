@@ -12,6 +12,14 @@ describe("configuração segura de desenvolvimento", () => {
     expect(compose).not.toContain('"3000:3000"');
   });
 
+  it("inclui o portal e seus metadados sociais na imagem de produção", async () => {
+    const dockerignore = await readFile(".dockerignore", "utf8");
+    const dockerfile = await readFile("Dockerfile", "utf8");
+    expect(dockerignore.split(/\r?\n/)).not.toContain("docs");
+    expect(dockerfile).toContain("COPY docs ./docs");
+    expect(dockerfile).toContain("COPY --from=build --chown=node:node /app/docs ./docs");
+  });
+
   it("persiste números ignorados com isolamento por projeto e índice de consulta ativo", async () => {
     const migration = await readFile("src/db/migrations/007_ignored_phone_numbers.sql", "utf8");
     const repository = await readFile("src/repositories/postgres.repository.ts", "utf8");

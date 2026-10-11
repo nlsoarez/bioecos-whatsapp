@@ -9,6 +9,5 @@ data
 *.log
 *.dump
 *.dump.gpg
-docs
 tests
 !scripts/verify-backup.sh
