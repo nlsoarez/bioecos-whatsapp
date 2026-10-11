@@ -41,7 +41,7 @@ services:
       retries: 12
 
   bioecos-api:
-    image: ${BIOECOS_API_IMAGE:-bioecos-whatsapp:0.3.1-qr-refresh-vps}
+    image: ${BIOECOS_API_IMAGE:-bioecos-whatsapp:0.3.2-qr-refresh-secure}
     pull_policy: never
     container_name: bioecos-api
     restart: unless-stopped
