@@ -15,9 +15,9 @@ ALTER TABLE coordinator_notifications
   ADD COLUMN IF NOT EXISTS accepted_at timestamptz;
 
 ALTER TABLE coordinator_notifications ADD CONSTRAINT coordinator_notifications_status_check
-  CHECK (status IN ('pending', 'processing', 'accepted', 'failed'));
+  CHECK (status IN ('pending', 'processing', 'accepted', 'sent', 'failed'));
 ALTER TABLE conversations ADD CONSTRAINT conversations_coordinator_notification_status_check
-  CHECK (coordinator_notification_status IN ('not_required', 'pending', 'processing', 'accepted', 'failed'));
+  CHECK (coordinator_notification_status IN ('not_required', 'pending', 'processing', 'accepted', 'sent', 'failed'));
 
 CREATE UNIQUE INDEX IF NOT EXISTS coordinator_notifications_request_idx
   ON coordinator_notifications(conversation_id, source_message_id) WHERE source_message_id IS NOT NULL;
