@@ -26,6 +26,7 @@ const schema = z.object({
   AUTOMATION_END_HOUR: z.coerce.number().int().min(1).max(24).default(24),
   FOLLOWUP_WORKER_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
   WEBHOOK_WORKER_INTERVAL_MS: z.coerce.number().int().min(1_000).default(2_000),
+  COORDINATOR_NOTIFICATION_WORKER_INTERVAL_MS: z.coerce.number().int().min(1_000).default(5_000),
   OPENAI_HEALTH_INTERVAL_MS: z.coerce.number().int().min(300_000).default(3_600_000),
   DATA_RETENTION_DAYS: z.coerce.number().int().min(30).max(3_650).default(365),
   AI_PROVIDER: z.enum(["openai"]).default("openai"),

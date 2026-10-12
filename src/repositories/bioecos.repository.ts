@@ -1,6 +1,6 @@
 import type { AllowedTag, PipelineStage } from "../domain/constants.js";
 import type {
-  ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
+  ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationDraft, CoordinatorNotificationRecord, InboundMessage,
   IngestResult, KnowledgeHit, LeadAssessment, LeadTemperature, MonthlyFollowupCandidate,
   MonthlyFollowupSettings, QualificationStep, IgnoredPhoneNumber, IgnoredPhoneNumberInput,
 } from "../domain/types.js";
@@ -51,11 +51,14 @@ export interface BioecosRepository {
   markMonthlyFollowupSent(candidate: MonthlyFollowupCandidate, content: string): Promise<void>;
   markMonthlyFollowupFailed(candidate: MonthlyFollowupCandidate, error: string): Promise<void>;
   addNote(context: ContactContext, note: string): Promise<void>;
-  handoff(context: ContactContext, reason: string, summary: string): Promise<void>;
-  createCoordinatorNotification(context: ContactContext, message: string): Promise<string>;
+  handoffWithCoordinatorNotification(context: ContactContext, reason: string, summary: string, notification: CoordinatorNotificationDraft): Promise<string>;
   getCoordinatorNotification(id: string): Promise<CoordinatorNotificationRecord | null>;
-  markCoordinatorNotification(id: string, status: "sent" | "failed", error?: string): Promise<void>;
-  getFailedCoordinatorNotifications(limit: number): Promise<CoordinatorNotificationRecord[]>;
+  claimCoordinatorNotification(id: string): Promise<CoordinatorNotificationRecord | null>;
+  claimDueCoordinatorNotifications(limit: number): Promise<CoordinatorNotificationRecord[]>;
+  markCoordinatorNotificationAccepted(id: string, recipientPhone: string, providerMessageId: string): Promise<void>;
+  markCoordinatorNotificationRetry(id: string, error: string, nextAttemptAt: Date | null, recipientPhone?: string | null): Promise<void>;
+  requeueCoordinatorNotification(id: string): Promise<boolean>;
+  listCoordinatorNotifications(status: string, limit: number): Promise<CoordinatorNotificationRecord[]>;
   setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string): Promise<void>;
   getLeads(filter: string): Promise<unknown[]>;
   saveOutbound(conversationId: string, externalMessageId: string, content: string, metadata: unknown): Promise<void>;

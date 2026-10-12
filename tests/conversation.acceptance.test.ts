@@ -3,12 +3,17 @@ import type { AgentClient, AgentToolExecutor } from "../src/services/openai.serv
 import type { ChatMessage, ContactContext, InboundMessage, KnowledgeHit } from "../src/domain/types.js";
 import type { MessageSender } from "../src/services/evolution.service.js";
 import { ConversationService } from "../src/services/conversation.service.js";
+import { CoordinatorNotificationService } from "../src/services/coordinator-notification.service.js";
 import type { KnowledgeManagement } from "../src/services/knowledge-management.service.js";
 import { InMemoryRepository } from "./support/in-memory.repository.js";
 
 class FakeAgent implements AgentClient {
   calls = 0;
   async embed() { return null; }
+  async classifyHandoff(input: { userMessage: string }) {
+    return /algu[eé]m da equipe|conversar com uma pessoa|ele confirme/i.test(input.userMessage)
+      ? { requested: true, reason: "Solicitação de participação humana" } : { requested: false, reason: null };
+  }
   async respond(input: {
     prompt: string; context: ContactContext; recentMessages: ChatMessage[]; userMessage: string;
     knowledge: KnowledgeHit[]; tools: AgentToolExecutor;
@@ -50,7 +55,8 @@ function setup(knowledge = true, knowledgeManagement?: KnowledgeManagement) {
   if (knowledge) repository.knowledge = [{ id: "k1", title: "Base oficial", content: "Informação oficial", score: 1 }];
   const agent = new FakeAgent();
   const sender = new FakeSender();
-  return { repository, agent, sender, service: new ConversationService(repository, agent, sender, undefined, knowledgeManagement) };
+  const notifier = new CoordinatorNotificationService(repository, sender, async () => "5521999999999", "https://painel.exemplo");
+  return { repository, agent, sender, notifier, service: new ConversationService(repository, agent, sender, notifier, knowledgeManagement) };
 }
 
 describe("homologação Bioecos", () => {
@@ -109,7 +115,7 @@ describe("homologação Bioecos", () => {
     expect(s.repository.context.tags).toContain("orcamento");
     expect(s.repository.context.pipelineStage).toBe("Aguardando coordenador");
     expect(s.repository.context.workflowState).toBe("awaiting_coordinator");
-    expect(result.response).toContain("coordenação");
+    expect(result.response).toContain("notificação foi aceita");
   });
 
   it("8. pedido de consultor realiza handoff e pausa IA", async () => {
@@ -118,6 +124,32 @@ describe("homologação Bioecos", () => {
     expect(s.repository.context.automationPaused).toBe(true);
     expect(s.repository.context.tags).toContain("falar-com-especialista");
     expect(s.agent.calls).toBe(0);
+  });
+
+  it.each([
+    "Pode chamar alguém da equipe?",
+    "Prefiro conversar com uma pessoa",
+    "Preciso que ele confirme",
+  ])("8b. reconhece solicitação humana indireta: %s", async (content) => {
+    const s = setup();
+    const result = await s.service.handle(inbound(content));
+    expect(result.response).toContain("notificação foi aceita");
+    expect(s.repository.context.automationPaused).toBe(true);
+    expect(s.repository.notifications).toHaveLength(1);
+  });
+
+  it("8c. não afirma sucesso quando a notificação ainda está pendente", async () => {
+    const repository = new InMemoryRepository();
+    const agent = new FakeAgent();
+    const customerSender = new FakeSender();
+    const failingSender = new FakeSender();
+    failingSender.sendText = async () => { throw new Error("Evolution indisponível"); };
+    const notifier = new CoordinatorNotificationService(repository, failingSender, async () => "5521999999999", "https://painel.exemplo");
+    const service = new ConversationService(repository, agent, customerSender, notifier);
+    const result = await service.handle(inbound("Quero atendimento humano"));
+    expect(result.response).toContain("ainda não foi confirmado");
+    expect(result.response).not.toContain("notificação foi aceita");
+    expect(repository.context.automationPaused).toBe(true);
   });
 
   it("9. pergunta sem base não é inventada nem gera handoff", async () => {

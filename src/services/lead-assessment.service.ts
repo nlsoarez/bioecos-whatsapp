@@ -16,7 +16,7 @@ const COURSE_PATTERNS: Array<[RegExp, string]> = [
 
 const ENROLLMENT_INTENT_PATTERN = /\b(quero (?:me )?(?:matricular|inscrever)|como (?:fa[cç]o|fazer) (?:a )?(?:matr[ií]cula|inscri[cç][aã]o)|quando (?:posso|consigo) come[cç]ar|tem vaga|ainda h[aá] vaga|garantir (?:a )?vaga|pode (?:me )?inscrever)\b/i;
 const PAYMENT_OR_COMMERCIAL_PATTERN = /\b(quero fechar|quero (?:um )?or[cç]amento|quero (?:uma )?proposta|como (?:fa[cç]o|fazer) para pagar|onde (?:eu )?pago|quero pagar|pix|boleto|cart[aã]o|link de pagamento|parcelar|parcelamento|negociar|negocia[cç][aã]o|condi[cç][aã]o de pagamento|desconto)\b/i;
-const HUMAN_PATTERN = /\b(falar com (?:um |uma |a |o )?(?:humano|pessoa|atendente|coordenador|consultor|especialista)|atendimento humano)\b/i;
+const HUMAN_PATTERN = /\b(?:falar|conversar|ser atendid[oa]|quero atendimento|prefiro falar|pode (?:me )?(?:passar|transferir|encaminhar|chamar))\s+(?:com|por|para)?\s*(?:um |uma |a |o )?(?:humano|pessoa|algu[eé]m|atendente|coordenador|consultor|especialista|respons[aá]vel|equipe)|\batendimento humano\b/i;
 const NOT_INTERESTED_PATTERN = /\b(n[aã]o tenho interesse|n[aã]o quero|desisti|pode encerrar|pare de mandar|n[aã]o me chame|remova meu contato)\b/i;
 const FOLLOWUP_MESSAGE_PATTERN = /retomando nossa conversa|seu interesse continua|alguma quest[aã]o est[aá] impedindo/i;
 

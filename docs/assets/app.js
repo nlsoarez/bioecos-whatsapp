@@ -36,6 +36,7 @@ byId("connect-whatsapp")?.addEventListener("click", connectWhatsApp);
 byId("repair-webhook")?.addEventListener("click", repairWebhook);
 byId("toggle-followup")?.addEventListener("click", toggleMonthlyFollowup);
 byId("coordinator-form")?.addEventListener("submit", saveCoordinatorPhone);
+byId("notification-status-filter")?.addEventListener("change", () => void loadNotificationHistory());
 byId("ignored-number-form")?.addEventListener("submit", saveIgnoredNumber);
 byId("cancel-ignored-edit")?.addEventListener("click", resetIgnoredNumberForm);
 byId("ignored-search")?.addEventListener("input", debounce(() => void loadIgnoredNumbers(), 250));
@@ -701,6 +702,42 @@ function showSection(section) {
   if (section === "leads") loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");
   if (section === "ignored-numbers") loadIgnoredNumbers();
   if (section === "knowledge") { void loadKnowledge(); void loadKnowledgeMedia(); }
+  if (section === "conversations") void loadNotificationHistory();
+}
+
+async function loadNotificationHistory() {
+  const container = byId("notification-history");
+  if (!container) return;
+  container.replaceChildren(emptyState("Carregando transferências..."));
+  const status = byId("notification-status-filter")?.value || "";
+  try {
+    const result = await api(`/dashboard/notifications?status=${encodeURIComponent(status)}&limit=50`);
+    const notifications = Array.isArray(result.notifications) ? result.notifications : [];
+    container.replaceChildren();
+    if (!notifications.length) return container.append(emptyState("Nenhuma transferência encontrada."));
+    notifications.forEach((notification) => {
+      const row = document.createElement("div"); row.className = "notification-row";
+      const main = document.createElement("div");
+      const heading = document.createElement("div"); heading.className = "notification-heading";
+      const title = document.createElement("strong"); title.textContent = notificationStatusLabel(notification.status);
+      const time = document.createElement("span"); time.textContent = formatDateTime(notification.requestedAt);
+      heading.append(title, time);
+      const message = document.createElement("p"); message.textContent = String(notification.message || "Solicitação registrada").split("\n").slice(0, 5).join(" · ");
+      const meta = document.createElement("small");
+      meta.textContent = `${notification.recipientMasked || "Coordenador não configurado"} · ${notification.attempts || 0} tentativa(s)${notification.lastError ? ` · ${notification.lastError}` : ""}`;
+      main.append(heading, message, meta); row.append(main);
+      if (notification.status === "failed") {
+        const retry = document.createElement("button"); retry.type = "button"; retry.className = "secondary-action"; retry.textContent = "Tentar novamente";
+        retry.addEventListener("click", async () => { retry.disabled = true; try { await api(`/dashboard/notifications/${encodeURIComponent(notification.id)}/retry`, { method: "POST" }); await loadNotificationHistory(); await loadNotificationFailures(); } catch (error) { window.alert(error.message); } finally { retry.disabled = false; } });
+        row.append(retry);
+      }
+      container.append(row);
+    });
+  } catch (error) { container.replaceChildren(emptyState(error.message)); }
+}
+
+function notificationStatusLabel(status) {
+  return ({ pending: "Aguardando nova tentativa", processing: "Envio em andamento", accepted: "Aceita pelo WhatsApp — leitura não confirmada", failed: "Falha definitiva" })[status] || "Estado desconhecido";
 }
 
 function showKnowledgeTab(tab = "entries") {

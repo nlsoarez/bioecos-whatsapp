@@ -121,7 +121,8 @@ export class InMemoryRepository implements BioecosRepository {
   async markMonthlyFollowupSent(candidate: MonthlyFollowupCandidate, _content: string) { this.monthlySent.push(candidate); }
   async markMonthlyFollowupFailed(candidate: MonthlyFollowupCandidate, error: string) { this.monthlyFailures.push({ candidate, error }); }
   async addNote(_context: ContactContext, note: string) { this.notes.push(note); }
-  async handoff(_context: ContactContext, reason: string, summary: string) {
+  async handoffWithCoordinatorNotification(context: ContactContext, reason: string, summary: string,
+    notification: import("../../src/domain/types.js").CoordinatorNotificationDraft) {
     this.handoffs.push({ reason, summary });
     this.context.automationPaused = true;
     this.context.pipelineStage = "Aguardando coordenador";
@@ -131,20 +132,56 @@ export class InMemoryRepository implements BioecosRepository {
     this.context.coordinatorNotificationStatus = "pending";
     this.context.followupEnabled = false;
     if (!this.context.tags.includes("falar-com-especialista")) this.context.tags.push("falar-com-especialista");
-  }
-  async createCoordinatorNotification(context: ContactContext, message: string) {
+    const duplicate = this.notifications.find((item) => item.conversationId === context.conversationId
+      && item.sourceMessageId === notification.sourceMessageId);
+    if (duplicate) return duplicate.id;
     const id = `notification-${this.notifications.length + 1}`;
     this.notifications.push({ id, contactId: context.contactId, conversationId: context.conversationId,
-      message, status: "pending", attempts: 0, lastError: null });
+      message: notification.message, sourceMessageId: notification.sourceMessageId, status: "pending", attempts: 0,
+      lastError: null, recipientPhone: null, providerMessageId: null, requestedAt: notification.requestedAt,
+      lastAttemptAt: null, nextAttemptAt: new Date(), acceptedAt: null });
     return id;
   }
   async getCoordinatorNotification(id: string) { return this.notifications.find((item) => item.id === id) ?? null; }
-  async markCoordinatorNotification(id: string, status: "sent" | "failed", error?: string) {
+  async claimCoordinatorNotification(id: string) {
     const item = this.notifications.find((candidate) => candidate.id === id);
-    if (item) { item.status = status; item.attempts += 1; item.lastError = error ?? null; }
+    if (!item || item.status !== "pending" || (item.nextAttemptAt && item.nextAttemptAt > new Date())) return null;
+    item.status = "processing"; item.attempts += 1; item.lastAttemptAt = new Date();
+    this.context.coordinatorNotificationStatus = "processing";
+    return item;
+  }
+  async claimDueCoordinatorNotifications(limit: number) {
+    const due: CoordinatorNotificationRecord[] = [];
+    for (const item of this.notifications) {
+      if (due.length >= limit) break;
+      if (item.status === "pending" && (!item.nextAttemptAt || item.nextAttemptAt <= new Date())) {
+        item.status = "processing"; item.attempts += 1; item.lastAttemptAt = new Date(); due.push(item);
+      }
+    }
+    return due;
+  }
+  async markCoordinatorNotificationAccepted(id: string, recipientPhone: string, providerMessageId: string) {
+    const item = this.notifications.find((candidate) => candidate.id === id);
+    if (item) { item.status = "accepted"; item.recipientPhone = recipientPhone; item.providerMessageId = providerMessageId;
+      item.acceptedAt = new Date(); item.nextAttemptAt = null; item.lastError = null; }
+    this.context.coordinatorNotificationStatus = "accepted";
+  }
+  async markCoordinatorNotificationRetry(id: string, error: string, nextAttemptAt: Date | null, recipientPhone?: string | null) {
+    const item = this.notifications.find((candidate) => candidate.id === id);
+    const status = nextAttemptAt ? "pending" : "failed";
+    if (item) { item.status = status; item.lastError = error; item.nextAttemptAt = nextAttemptAt;
+      if (recipientPhone) item.recipientPhone = recipientPhone; }
     this.context.coordinatorNotificationStatus = status;
   }
-  async getFailedCoordinatorNotifications(limit: number) { return this.notifications.filter((item) => item.status === "failed").slice(0, limit); }
+  async requeueCoordinatorNotification(id: string) {
+    const item = this.notifications.find((candidate) => candidate.id === id && candidate.status === "failed");
+    if (!item) return false;
+    item.status = "pending"; item.attempts = 0; item.nextAttemptAt = new Date(); item.lastError = null;
+    return true;
+  }
+  async listCoordinatorNotifications(status: string, limit: number) {
+    return this.notifications.filter((item) => !status || item.status === status).slice(0, limit);
+  }
   async setConversationWorkflow(_conversationId: string, state: ConversationWorkflowState, owner: string, reason: string) {
     this.context.workflowState = state;
     this.context.currentOwner = owner;

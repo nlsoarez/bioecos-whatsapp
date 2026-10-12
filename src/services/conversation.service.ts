@@ -9,13 +9,17 @@ import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "./coordinator
 import { ToolService } from "./tool.service.js";
 import type { KnowledgeManagement } from "./knowledge-management.service.js";
 
-const HANDOFF_MESSAGE = "Entendi. Registrei o que você precisa e a coordenação da equipe responsável continuará o atendimento por aqui.";
+const HANDOFF_ACCEPTED_MESSAGE = "Registrei sua solicitação e a notificação foi aceita pelo canal WhatsApp da equipe. Isso confirma o envio, não a leitura. A equipe continuará o atendimento por aqui.";
+const HANDOFF_PENDING_MESSAGE = "Registrei sua solicitação, mas o envio da notificação à equipe ainda não foi confirmado. O sistema continuará tentando e o contexto desta conversa foi preservado.";
+const HANDOFF_FAILED_MESSAGE = "Registrei sua solicitação, mas não foi possível confirmar o aviso à equipe neste momento. O contexto da conversa foi preservado para acompanhamento.";
 const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e encerrei os acompanhamentos automáticos.";
 const TEMPORARY_ERROR_MESSAGE = "Estou com uma instabilidade temporária e não consegui concluir essa resposta agora. Por favor, tente novamente em alguns instantes.";
 const GREETING_PATTERN = /^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê]|tudo bem)[!?.\s]*$/i;
 const FOLLOWUP_OPT_OUT_PATTERN = /^(?:sair|parar|cancelar|n[aã]o quero (?:mais )?(?:mensagens|acompanhamento)|remova meu contato)[.!\s]*$/i;
 const COURSE_OVERVIEW_PATTERN = /(?:quais?|lista|op[cç][oõ]es?|todos?).{0,30}(?:cursos?|forma[cç][oõ]es?)|(?:cursos?|forma[cç][oõ]es?).{0,30}(?:tem|t[eê]m|oferece|dispon[ií]ve)/i;
 const IMAGE_REQUEST_PATTERN = /\b(imagem|imagens|foto|fotos|folder|cartaz|divulga[cç][aã]o)\b/i;
+const HANDOFF_CANDIDATE_PATTERN = /\b(humano|pessoa|algu[eé]m|atendente|coordena|consultor|especialista|respons[aá]vel|equipe|transfer|encaminh|chamar|avisar|confirma|retorno|responder|falar com|conversar com|ele|ela)\b/i;
+const UNSUPPORTED_EXTERNAL_ACTION_PATTERN = /\b(?:j[aá] registrei|avisei|acionei|encaminhei|vou (?:avisar|acionar|encaminhar)|acionarei|assim que (?:eu )?tiver .{0,60} aviso)\b/i;
 const COURSE_CONTENT_SUMMARIES: Record<string, string> = {
   "Plantas Medicinais": "Nos conteúdos publicados pela Bioecos, Plantas Medicinais inclui identificação das plantas, escolha da parte utilizada, colheita e extração de princípios ativos, com preparo por infusão, decocção e tinturas.",
   Fitoterapia: "Nos conteúdos publicados pela Bioecos, Fitoterapia inclui tinturas, terapêutica da fitoterapia, formas farmacêuticas, uso de tinturas em formulações e produção de Produtos Tradicionais Fitoterápicos.",
@@ -52,6 +56,16 @@ export class ConversationService {
     const wasFollowupReply = ingestion.context.followupEnabled;
     await this.repository.cancelFollowups(ingestion.context, "O contato respondeu; sequência anterior cancelada");
     const assessment = assessLead(message.content, recentMessages, ingestion.context);
+    if (!assessment.shouldHandoff && HANDOFF_CANDIDATE_PATTERN.test(message.content) && this.agent.classifyHandoff) {
+      const semantic = await this.agent.classifyHandoff({ recentMessages, userMessage: message.content })
+        .catch(() => ({ requested: false, reason: null }));
+      if (semantic.requested) {
+        assessment.shouldHandoff = true;
+        assessment.temperature = "hot";
+        assessment.handoffReason = semantic.reason ?? "Solicitação de participação de uma pessoa da equipe";
+        assessment.reason = assessment.handoffReason;
+      }
+    }
     await this.repository.recordLeadAssessment(ingestion.context, assessment);
 
     if (assessment.notInterested) {
@@ -131,6 +145,13 @@ export class ConversationService {
         tools,
       });
       response = enforceSupportedCourseResponse(response, selectedCourse, knowledge);
+      if (UNSUPPORTED_EXTERNAL_ACTION_PATTERN.test(response)) {
+        const guardedAssessment = { ...assessment, shouldHandoff: true, temperature: "hot" as const,
+          handoffReason: "Resposta depende de confirmação ou ação de uma pessoa da equipe",
+          reason: "Resposta depende de confirmação ou ação de uma pessoa da equipe" };
+        await this.repository.recordLeadAssessment(ingestion.context, guardedAssessment);
+        return this.handoffAndRespond(ingestion.context, guardedAssessment, recentMessages, message, guardedAssessment.handoffReason);
+      }
     } catch {
       await this.sendAndSave(ingestion.context.conversationId, message.phone, TEMPORARY_ERROR_MESSAGE);
       return { status: "responded", response: TEMPORARY_ERROR_MESSAGE };
@@ -153,10 +174,14 @@ export class ConversationService {
     const summary = buildSummary(context, assessment, recentMessages, message.content);
     if (/or[cç]amento|proposta/i.test(message.content)) await this.repository.addTag(context, "orcamento");
     if (/matr[ií]cula|inscri[cç][aã]o|me inscrever|quero continuar|^\s*sim\s*$/i.test(message.content)) await this.repository.addTag(context, "inscricao");
-    await this.repository.handoff(context, reason, summary);
-    await this.notifier.notify(context, { assessment, summary, lastMessage: message.content }).catch(() => null);
-    await this.sendAndSave(context.conversationId, message.phone, HANDOFF_MESSAGE);
-    return { status: "responded", response: HANDOFF_MESSAGE };
+    const notification = await this.notifier.notify(context, {
+      assessment, summary, lastMessage: message.content, reason,
+      sourceMessageId: message.externalMessageId, requestedAt: message.timestamp,
+    }).catch(() => ({ id: "unavailable", status: "failed" as const, providerMessageId: null }));
+    const response = notification.status === "accepted" ? HANDOFF_ACCEPTED_MESSAGE
+      : notification.status === "pending" ? HANDOFF_PENDING_MESSAGE : HANDOFF_FAILED_MESSAGE;
+    await this.sendAndSave(context.conversationId, message.phone, response);
+    return { status: "responded", response };
   }
 
   private async sendAndSave(conversationId: string, phone: string, content: string): Promise<void> {

@@ -2,7 +2,7 @@ import type pg from "pg";
 import { randomUUID } from "node:crypto";
 import { ALLOWED_TAGS, PIPELINE_STAGES, type AllowedTag, type PipelineStage } from "../domain/constants.js";
 import type {
-  ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationRecord, InboundMessage,
+  ChatMessage, ContactContext, ConversationWorkflowState, CoordinatorNotificationDraft, CoordinatorNotificationRecord, InboundMessage,
   IngestResult, KnowledgeHit, LeadAssessment, LeadTemperature, MonthlyFollowupCandidate,
   MonthlyFollowupSettings, QualificationStep,
   OutboundWebhookMessage, IgnoredPhoneNumber, IgnoredPhoneNumberInput,
@@ -500,10 +500,23 @@ export class PostgresRepository implements BioecosRepository {
     await this.auditForContext(context, "agent", "note.added", { fields: ["notes"] });
   }
 
-  async handoff(context: ContactContext, reason: string, summary: string): Promise<void> {
+  async handoffWithCoordinatorNotification(
+    context: ContactContext,
+    reason: string,
+    summary: string,
+    notification: CoordinatorNotificationDraft,
+  ): Promise<string> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const duplicate = await client.query<{ id: string }>(
+        "SELECT id FROM coordinator_notifications WHERE conversation_id = $1 AND source_message_id = $2 FOR UPDATE",
+        [context.conversationId, notification.sourceMessageId],
+      );
+      if (duplicate.rows[0]) {
+        await client.query("COMMIT");
+        return duplicate.rows[0].id;
+      }
       const existing = await client.query<{ notes: string | null }>("SELECT notes FROM leads WHERE id = $1 FOR UPDATE", [context.leadId]);
       const handoffNote = [this.pii.decryptNullable(existing.rows[0]?.notes) ?? "", `Handoff: ${reason}`].filter(Boolean).join("\n");
       await client.query(
@@ -527,7 +540,18 @@ export class PostgresRepository implements BioecosRepository {
       );
       const project = await client.query<{ project_id: string }>("SELECT project_id FROM contacts WHERE id = $1", [context.contactId]);
       await this.audit(client, project.rows[0]!.project_id, context.contactId, context.conversationId, "agent", "handoff.created", { reason: "recorded", summary: "recorded" });
+      const created = await client.query<{ id: string }>(
+        `INSERT INTO coordinator_notifications(contact_id, conversation_id, message, source_message_id, requested_at, next_attempt_at)
+         VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (conversation_id, source_message_id) WHERE source_message_id IS NOT NULL
+         DO UPDATE SET source_message_id = EXCLUDED.source_message_id
+         RETURNING id`,
+        [context.contactId, context.conversationId, this.pii.encrypt(notification.message), notification.sourceMessageId, notification.requestedAt],
+      );
+      await this.audit(client, project.rows[0]!.project_id, context.contactId, context.conversationId,
+        "automation", "coordinator_notification.requested", { notificationId: created.rows[0]!.id });
       await client.query("COMMIT");
+      return created.rows[0]!.id;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -536,51 +560,76 @@ export class PostgresRepository implements BioecosRepository {
     }
   }
 
-  async createCoordinatorNotification(context: ContactContext, message: string): Promise<string> {
-    const result = await this.pool.query<{ id: string }>(
-      `INSERT INTO coordinator_notifications(contact_id, conversation_id, message)
-       VALUES ($1, $2, $3) RETURNING id`,
-      [context.contactId, context.conversationId, this.pii.encrypt(message)],
-    );
-    return result.rows[0]!.id;
-  }
-
   async getCoordinatorNotification(id: string): Promise<CoordinatorNotificationRecord | null> {
-    const result = await this.pool.query<{
-      id: string; contact_id: string; conversation_id: string; message: string;
-      status: "pending" | "sent" | "failed"; attempts: number; last_error: string | null;
-    }>("SELECT id, contact_id, conversation_id, message, status, attempts, last_error FROM coordinator_notifications WHERE id = $1", [id]);
-    const row = result.rows[0];
-    return row ? { id: row.id, contactId: row.contact_id, conversationId: row.conversation_id,
-      message: this.pii.decrypt(row.message), status: row.status, attempts: row.attempts,
-      lastError: this.pii.decryptNullable(row.last_error) } : null;
+    const result = await this.pool.query("SELECT * FROM coordinator_notifications WHERE id = $1", [id]);
+    return result.rows[0] ? this.mapCoordinatorNotification(result.rows[0]) : null;
   }
 
-  async markCoordinatorNotification(id: string, status: "sent" | "failed", error?: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE coordinator_notifications SET status = $2, attempts = attempts + 1, last_error = $3,
-       sent_at = CASE WHEN $2 = 'sent' THEN now() ELSE sent_at END, updated_at = now() WHERE id = $1`,
-      [id, status, error ? this.pii.encrypt(error.slice(0, 500)) : null],
+  async claimCoordinatorNotification(id: string): Promise<CoordinatorNotificationRecord | null> {
+    const result = await this.pool.query(
+      `UPDATE coordinator_notifications SET status = 'processing', locked_at = now(), last_attempt_at = now(),
+       attempts = attempts + 1, updated_at = now()
+       WHERE id = $1 AND status = 'pending' AND next_attempt_at <= now()
+       RETURNING *`, [id],
     );
-    await this.pool.query(
-      `UPDATE conversations SET coordinator_notification_status = $2
-       WHERE id = (SELECT conversation_id FROM coordinator_notifications WHERE id = $1)`,
-      [id, status],
-    );
+    if (result.rows[0]) await this.setConversationNotificationStatus(id, "processing");
+    return result.rows[0] ? this.mapCoordinatorNotification(result.rows[0]) : null;
   }
 
-  async getFailedCoordinatorNotifications(limit: number): Promise<CoordinatorNotificationRecord[]> {
-    const result = await this.pool.query<{
-      id: string; contact_id: string; conversation_id: string; message: string;
-      status: "failed"; attempts: number; last_error: string | null;
-    }>(
-      `SELECT id, contact_id, conversation_id, message, status, attempts, last_error
-       FROM coordinator_notifications WHERE status = 'failed' ORDER BY updated_at DESC LIMIT $1`,
+  async claimDueCoordinatorNotifications(limit: number): Promise<CoordinatorNotificationRecord[]> {
+    const result = await this.pool.query(
+      `UPDATE coordinator_notifications claimed SET status = 'processing', locked_at = now(), last_attempt_at = now(),
+       attempts = attempts + 1, updated_at = now()
+       FROM (SELECT id FROM coordinator_notifications
+         WHERE (status = 'pending' AND next_attempt_at <= now())
+            OR (status = 'processing' AND locked_at < now() - interval '10 minutes')
+         ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT $1) due
+       WHERE claimed.id = due.id RETURNING claimed.*`,
       [Math.max(1, Math.min(limit, 100))],
     );
-    return result.rows.map((row) => ({ id: row.id, contactId: row.contact_id, conversationId: row.conversation_id,
-      message: this.pii.decrypt(row.message), status: row.status, attempts: row.attempts,
-      lastError: this.pii.decryptNullable(row.last_error) }));
+    for (const row of result.rows) await this.setConversationNotificationStatus(row.id, "processing");
+    return result.rows.map((row) => this.mapCoordinatorNotification(row));
+  }
+
+  async markCoordinatorNotificationAccepted(id: string, recipientPhone: string, providerMessageId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE coordinator_notifications SET status = 'accepted', recipient_phone = $2, provider_message_id = $3,
+       accepted_at = now(), sent_at = now(), next_attempt_at = null, locked_at = null, last_error = null, updated_at = now()
+       WHERE id = $1`, [id, this.pii.encrypt(recipientPhone), providerMessageId],
+    );
+    await this.setConversationNotificationStatus(id, "accepted");
+    await this.auditNotification(id, "coordinator_notification.accepted", { providerMessageId: "recorded" });
+  }
+
+  async markCoordinatorNotificationRetry(id: string, error: string, nextAttemptAt: Date | null, recipientPhone?: string | null): Promise<void> {
+    const status = nextAttemptAt ? "pending" : "failed";
+    await this.pool.query(
+      `UPDATE coordinator_notifications SET status = $2, last_error = $3, next_attempt_at = $4,
+       recipient_phone = coalesce($5, recipient_phone),
+       locked_at = null, updated_at = now() WHERE id = $1`,
+      [id, status, this.pii.encrypt(error.slice(0, 500)), nextAttemptAt, recipientPhone ? this.pii.encrypt(recipientPhone) : null],
+    );
+    await this.setConversationNotificationStatus(id, status);
+    await this.auditNotification(id, nextAttemptAt ? "coordinator_notification.retry_scheduled" : "coordinator_notification.failed",
+      { nextAttemptAt: nextAttemptAt?.toISOString() ?? null });
+  }
+
+  async requeueCoordinatorNotification(id: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE coordinator_notifications SET status = 'pending', attempts = 0, next_attempt_at = now(),
+       locked_at = null, last_error = null, updated_at = now()
+       WHERE id = $1 AND status = 'failed' RETURNING id`, [id],
+    );
+    if (result.rowCount) await this.setConversationNotificationStatus(id, "pending");
+    return Boolean(result.rowCount);
+  }
+
+  async listCoordinatorNotifications(status: string, limit: number): Promise<CoordinatorNotificationRecord[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM coordinator_notifications WHERE ($1 = '' OR status = $1)
+       ORDER BY requested_at DESC LIMIT $2`, [status, Math.max(1, Math.min(limit, 100))],
+    );
+    return result.rows.map((row) => this.mapCoordinatorNotification(row));
   }
 
   async setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string): Promise<void> {
@@ -994,6 +1043,36 @@ export class PostgresRepository implements BioecosRepository {
   private async auditForContext(context: ContactContext, actor: string, action: string, details: unknown): Promise<void> {
     const project = await this.pool.query<{ project_id: string }>("SELECT project_id FROM contacts WHERE id = $1", [context.contactId]);
     await this.audit(this.pool, project.rows[0]!.project_id, context.contactId, context.conversationId, actor, action, details);
+  }
+
+  private mapCoordinatorNotification(row: Record<string, unknown>): CoordinatorNotificationRecord {
+    return {
+      id: String(row.id), contactId: String(row.contact_id), conversationId: String(row.conversation_id),
+      message: this.pii.decrypt(String(row.message)), sourceMessageId: row.source_message_id ? String(row.source_message_id) : null,
+      status: row.status as CoordinatorNotificationRecord["status"], attempts: Number(row.attempts),
+      lastError: this.pii.decryptNullable(row.last_error ? String(row.last_error) : null),
+      recipientPhone: this.pii.decryptNullable(row.recipient_phone ? String(row.recipient_phone) : null),
+      providerMessageId: row.provider_message_id ? String(row.provider_message_id) : null,
+      requestedAt: new Date(String(row.requested_at)), lastAttemptAt: row.last_attempt_at ? new Date(String(row.last_attempt_at)) : null,
+      nextAttemptAt: row.next_attempt_at ? new Date(String(row.next_attempt_at)) : null,
+      acceptedAt: row.accepted_at ? new Date(String(row.accepted_at)) : null,
+    };
+  }
+
+  private async setConversationNotificationStatus(id: string, status: ContactContext["coordinatorNotificationStatus"]): Promise<void> {
+    await this.pool.query(
+      `UPDATE conversations SET coordinator_notification_status = $2
+       WHERE id = (SELECT conversation_id FROM coordinator_notifications WHERE id = $1)`, [id, status],
+    );
+  }
+
+  private async auditNotification(id: string, action: string, details: unknown): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO audit_logs(project_id, contact_id, conversation_id, actor, action, details)
+       SELECT c.project_id, n.contact_id, n.conversation_id, 'automation', $2, $3
+       FROM coordinator_notifications n JOIN contacts c ON c.id = n.contact_id WHERE n.id = $1`,
+      [id, action, JSON.stringify(details)],
+    );
   }
 
   private async audit(queryable: Queryable, projectId: string, contactId: string, conversationId: string | null, actor: string, action: string, details: unknown): Promise<void> {

@@ -473,7 +473,17 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.get("/dashboard/notifications/failed", async (request) => {
     await requireSession(request);
-    return { notifications: await repository.getFailedCoordinatorNotifications(50) };
+    return { notifications: (await repository.listCoordinatorNotifications("failed", 50)).map(publicNotification) };
+  });
+
+  app.get("/dashboard/notifications", async (request) => {
+    await requireSession(request);
+    const values = z.object({
+      status: z.preprocess((value) => value === "" ? undefined : value,
+        z.enum(["pending", "processing", "accepted", "failed"]).optional()),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+    }).parse(request.query);
+    return { notifications: (await repository.listCoordinatorNotifications(values.status ?? "", values.limit)).map(publicNotification) };
   });
 
   app.post<{ Params: { id: string } }>("/dashboard/notifications/:id/retry", async (request) => {
@@ -534,6 +544,16 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     await repository.moveCard(context, values.stage, values.reason);
     return { ok: true, stage: values.stage };
   });
+}
+
+function publicNotification(notification: import("../domain/types.js").CoordinatorNotificationRecord) {
+  const digits = notification.recipientPhone?.replace(/\D/g, "") ?? "";
+  return {
+    ...notification,
+    recipientPhone: undefined,
+    recipientMasked: digits ? `••••${digits.slice(-4)}` : null,
+    deliveryMeaning: notification.status === "accepted" ? "Aceita pelo provedor; leitura não confirmada" : null,
+  };
 }
 
 function httpError(statusCode: number, message: string): Error & { statusCode: number } {

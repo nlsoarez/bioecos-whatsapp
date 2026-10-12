@@ -55,6 +55,10 @@ const followupTimer = setInterval(() => void runMonthlyFollowup(), env.FOLLOWUP_
 followupTimer.unref();
 const webhookTimer = setInterval(() => void webhookJobs.runOnce().catch((error) => app.log.error(error, "Falha no worker de webhooks")), env.WEBHOOK_WORKER_INTERVAL_MS);
 webhookTimer.unref();
+const coordinatorNotificationTimer = setInterval(() => void coordinatorNotifier.runDue().then((result) => {
+  if (result.inspected) app.log.info(result, "Ciclo de notificações ao coordenador concluído");
+}).catch((error) => app.log.error(error, "Falha no worker de notificações ao coordenador")), env.COORDINATOR_NOTIFICATION_WORKER_INTERVAL_MS);
+coordinatorNotificationTimer.unref();
 const aiHealthTimer = setInterval(() => void agent.testCredit().then((status) => {
   if (status.state === "operational") return embeddings.runPending();
   return null;
@@ -67,6 +71,7 @@ const close = async (signal: string) => {
   app.log.info({ signal }, "Encerrando aplicação");
   clearInterval(followupTimer);
   clearInterval(webhookTimer);
+  clearInterval(coordinatorNotificationTimer);
   clearInterval(aiHealthTimer);
   clearInterval(retentionTimer);
   await app.close();
@@ -80,6 +85,7 @@ process.on("SIGINT", () => void close("SIGINT"));
 await app.listen({ host: "0.0.0.0", port: env.PORT });
 setTimeout(() => void runMonthlyFollowup(), 30_000).unref();
 setTimeout(() => void webhookJobs.runOnce(), 2_000).unref();
+setTimeout(() => void coordinatorNotifier.runDue(), 3_000).unref();
 setTimeout(() => void agent.testCredit().then((status) => status.state === "operational" ? embeddings.runPending() : null), 5_000).unref();
 setTimeout(() => void retention.runOnce(), 60_000).unref();
 

@@ -196,6 +196,13 @@
       <section id="section-conversations" class="dashboard-section" hidden>
         <div class="section-title"><span class="page-kicker">Monitoramento</span><h2>Atendimentos recentes</h2><p>Visão operacional das conversas processadas pela automação.</p></div>
         <article class="panel"><div id="conversation-list-full" class="conversation-list"><p class="empty-state">Nenhuma conversa registrada.</p></div></article>
+        <article class="panel notification-panel">
+          <div class="panel-heading"><div><span class="panel-kicker">Rastreabilidade</span><h2>Transferências para atendimento humano</h2></div>
+            <select id="notification-status-filter" aria-label="Filtrar notificações"><option value="">Todos os estados</option><option value="pending">Aguardando tentativa</option><option value="processing">Enviando</option><option value="accepted">Aceita pelo WhatsApp</option><option value="failed">Falha definitiva</option></select>
+          </div>
+          <p class="panel-description">“Aceita” confirma somente que o provedor recebeu a mensagem; não confirma leitura pelo coordenador.</p>
+          <div id="notification-history" class="notification-history"><p class="empty-state">Carregando transferências...</p></div>
+        </article>
       </section>
 
       <section id="section-ignored-numbers" class="dashboard-section" hidden>
@@ -273,6 +280,6 @@
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20261012-knowledge-manager" defer></script>
+  <script src="assets/app.js?v=20261012-reliable-handoff" defer></script>
 </body>
 </html>

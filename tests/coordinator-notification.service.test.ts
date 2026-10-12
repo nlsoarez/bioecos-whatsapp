@@ -23,18 +23,44 @@ describe("notificação ao coordenador", () => {
     const repository = new InMemoryRepository();
     const sender = new Sender();
     const service = new CoordinatorNotificationService(repository, sender, async () => "5521999999999", "https://painel.exemplo");
-    const result = await service.notify(repository.context, { assessment, summary: "Lead quer fechar", lastMessage: "Como pagar?" });
-    expect(result.status).toBe("sent");
+    const result = await service.notify(repository.context, { assessment, summary: "Lead quer fechar", lastMessage: "Como pagar?",
+      reason: "fechamento", sourceMessageId: "source-1", requestedAt: new Date("2026-10-12T12:00:00Z") });
+    expect(result.status).toBe("accepted");
     expect(sender.sent[0]).toContain("Aromaterapia");
     expect(sender.sent[0]).toContain("#conversation-conversation-1");
-    expect(repository.notifications[0]?.status).toBe("sent");
+    expect(repository.notifications[0]?.status).toBe("accepted");
   });
 
   it("registra falha recuperável quando o número não está configurado", async () => {
     const repository = new InMemoryRepository();
     const service = new CoordinatorNotificationService(repository, new Sender(), async () => null, "https://painel.exemplo");
-    const result = await service.notify(repository.context, { assessment, summary: "Lead quer fechar", lastMessage: "Como pagar?" });
-    expect(result.status).toBe("failed");
+    const result = await service.notify(repository.context, { assessment, summary: "Lead quer fechar", lastMessage: "Como pagar?",
+      reason: "fechamento", sourceMessageId: "source-2", requestedAt: new Date("2026-10-12T12:00:00Z") });
+    expect(result.status).toBe("pending");
     expect(repository.notifications[0]?.lastError).toContain("não configurado");
+  });
+
+  it("não duplica a mesma solicitação", async () => {
+    const repository = new InMemoryRepository();
+    const sender = new Sender();
+    const service = new CoordinatorNotificationService(repository, sender, async () => "5521999999999", "https://painel.exemplo");
+    const details = { assessment, summary: "Lead quer fechar", lastMessage: "Como pagar?", reason: "fechamento",
+      sourceMessageId: "same-source", requestedAt: new Date("2026-10-12T12:00:00Z") };
+    await service.notify(repository.context, details);
+    await service.notify(repository.context, details);
+    expect(repository.notifications).toHaveLength(1);
+    expect(sender.sent).toHaveLength(1);
+  });
+
+  it("encerra após cinco tentativas controladas", async () => {
+    const repository = new InMemoryRepository();
+    const service = new CoordinatorNotificationService(repository, new Sender(true), async () => "5521999999999", "https://painel.exemplo");
+    await service.notify(repository.context, { assessment, summary: "Lead quer fechar", lastMessage: "Como pagar?",
+      reason: "fechamento", sourceMessageId: "source-retries", requestedAt: new Date() });
+    for (let attempt = 2; attempt <= 5; attempt += 1) {
+      repository.notifications[0]!.nextAttemptAt = new Date(0);
+      await service.runDue();
+    }
+    expect(repository.notifications[0]).toMatchObject({ status: "failed", attempts: 5 });
   });
 });

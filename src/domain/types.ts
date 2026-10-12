@@ -35,7 +35,7 @@ export interface ContactContext {
 export type QualificationStep = "name" | "email" | "city" | "objective";
 export type LeadTemperature = "cold" | "warm" | "hot";
 export type ConversationWorkflowState = "ai_attending" | "awaiting_coordinator" | "coordinator_attending" | "conversation_finished" | "enrollment_completed" | "not_interested";
-export type CoordinatorNotificationStatus = "not_required" | "pending" | "sent" | "failed";
+export type CoordinatorNotificationStatus = "not_required" | "pending" | "processing" | "accepted" | "failed";
 export type EnrollmentStatus = "pending" | "completed" | "not_interested";
 
 export interface LeadAssessment {
@@ -92,9 +92,22 @@ export interface CoordinatorNotificationRecord {
   contactId: string;
   conversationId: string;
   message: string;
-  status: "pending" | "sent" | "failed";
+  sourceMessageId: string | null;
+  status: "pending" | "processing" | "accepted" | "failed";
   attempts: number;
   lastError: string | null;
+  recipientPhone: string | null;
+  providerMessageId: string | null;
+  requestedAt: Date;
+  lastAttemptAt: Date | null;
+  nextAttemptAt: Date | null;
+  acceptedAt: Date | null;
+}
+
+export interface CoordinatorNotificationDraft {
+  sourceMessageId: string;
+  message: string;
+  requestedAt: Date;
 }
 
 export interface ChatMessage {

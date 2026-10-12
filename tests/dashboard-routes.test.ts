@@ -75,6 +75,23 @@ async function setup() {
 }
 
 describe("rotas do dashboard", () => {
+  it("expõe o histórico de transferências somente para sessão autenticada", async () => {
+    const { app, repository } = await setup();
+    await repository.handoffWithCoordinatorNotification(repository.context, "Atendimento humano", "Resumo preservado", {
+      sourceMessageId: "handoff-dashboard-1", message: "Atendimento solicitado\nMotivo: Atendimento humano",
+      requestedAt: new Date("2026-10-12T12:00:00Z"),
+    });
+    expect((await app.inject({ method: "GET", url: "/dashboard/notifications" })).statusCode).toBe(401);
+    const login = await app.inject({ method: "POST", url: "/dashboard/auth/login",
+      payload: { username: "operador", password: "dashboard-password-secret" } });
+    const response = await app.inject({ method: "GET", url: "/dashboard/notifications?status=pending",
+      headers: { authorization: `Bearer ${login.json().token as string}` } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().notifications[0]).toMatchObject({ status: "pending", recipientMasked: null });
+    expect(response.body).not.toContain("recipientPhone");
+    await app.close();
+  });
+
   it("protege e gerencia a expansão da base por rotas autenticadas", async () => {
     const { app } = await setup();
     expect((await app.inject({ method: "GET", url: "/dashboard/knowledge" })).statusCode).toBe(401);

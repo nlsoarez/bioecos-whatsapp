@@ -13,6 +13,7 @@ export interface AgentToolExecutor {
 
 export interface AgentClient {
   embed(text: string): Promise<number[] | null>;
+  classifyHandoff?(input: { recentMessages: ChatMessage[]; userMessage: string }): Promise<{ requested: boolean; reason: string | null }>;
   respond(input: {
     prompt: string;
     context: ContactContext;
@@ -53,6 +54,27 @@ export class OpenAIResponsesClient implements AgentClient {
     const response = await this.post("/embeddings", { model: this.env.AI_EMBEDDING_MODEL, input: text }, apiKey);
     const data = response as { data?: Array<{ embedding?: number[] }> };
     return data.data?.[0]?.embedding ?? null;
+  }
+
+  async classifyHandoff(input: { recentMessages: ChatMessage[]; userMessage: string }): Promise<{ requested: boolean; reason: string | null }> {
+    const apiKey = await this.apiKeyProvider();
+    if (!apiKey) return { requested: false, reason: null };
+    const history = input.recentMessages.slice(-8).map((item) => `${item.direction}: ${item.content}`).join("\n");
+    const response = (await this.post("/responses", {
+      model: this.env.AI_MODEL,
+      instructions: "Classifique somente se o contato está pedindo que uma pessoa real da equipe participe, responda, confirme, retorne, seja avisada ou assuma o atendimento. Resolva pronomes pelo histórico. Dúvidas normais sobre cursos não são transferência.",
+      input: `HISTÓRICO\n${history}\n\nMENSAGEM ATUAL\n${input.userMessage}`,
+      text: { format: { type: "json_schema", name: "handoff_intent", strict: true, schema: {
+        type: "object", additionalProperties: false,
+        properties: { requested: { type: "boolean" }, reason: { type: ["string", "null"] } },
+        required: ["requested", "reason"],
+      } } },
+      store: false, max_output_tokens: 120, temperature: 0,
+    }, apiKey)) as OpenAIResponse;
+    const text = response.output_text ?? extractOutputText(response.output ?? []);
+    if (!text) return { requested: false, reason: null };
+    const parsed = JSON.parse(text) as { requested?: unknown; reason?: unknown };
+    return { requested: parsed.requested === true, reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : null };
   }
 
   async respond(input: {
