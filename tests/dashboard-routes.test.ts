@@ -221,6 +221,35 @@ describe("rotas do dashboard", () => {
     await app.close();
   });
 
+  it("exibe somente os quatro últimos dígitos do coordenador e atualiza a identificação", async () => {
+    const { app } = await setup();
+    const login = await app.inject({
+      method: "POST", url: "/dashboard/auth/login",
+      payload: { username: "operador", password: "dashboard-password-secret" },
+    });
+    const headers = { authorization: `Bearer ${login.json().token as string}` };
+
+    const empty = await app.inject({ method: "GET", url: "/dashboard/overview", headers });
+    expect(empty.json().services.coordinator).toMatchObject({ configured: false, masked: null });
+
+    const saved = await app.inject({
+      method: "PUT", url: "/dashboard/settings/coordinator-phone", headers,
+      payload: { phone: "+55 (21) 98888-4321" },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().masked).toBe("••••••4321");
+    expect(saved.body).not.toContain("5521988884321");
+
+    const configured = await app.inject({ method: "GET", url: "/dashboard/overview", headers });
+    expect(configured.json().services.coordinator).toMatchObject({ configured: true, masked: "••••••4321" });
+    expect(configured.body).not.toContain("5521988884321");
+
+    await app.inject({ method: "DELETE", url: "/dashboard/settings/coordinator-phone", headers });
+    const removed = await app.inject({ method: "GET", url: "/dashboard/overview", headers });
+    expect(removed.json().services.coordinator).toMatchObject({ configured: false, masked: null });
+    await app.close();
+  });
+
   it("limita força bruta, rejeita corpo excessivo e não expõe erro interno", async () => {
     const { app } = await setup();
     const statuses: number[] = [];

@@ -177,12 +177,13 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
 
   app.get("/dashboard/overview", async (request) => {
     await requireSession(request);
-    const [database, evolutionState, webhookState, ai, coordinator, dashboard, followupSettings, embeddings, queue] = await Promise.all([
+    const [database, evolutionState, webhookState, ai, coordinator, coordinatorPhone, dashboard, followupSettings, embeddings, queue] = await Promise.all([
       repository.health().catch(() => false),
       evolution.connectionState(),
       evolution.webhookStatus(),
       secrets.status("OPENAI_API_KEY"),
       secrets.status("COORDINATOR_WHATSAPP"),
+      secrets.get("COORDINATOR_WHATSAPP"),
       repository.getDashboard(),
       repository.getMonthlyFollowupSettings(),
       dependencies.embeddings?.status().catch(() => null) ?? null,
@@ -199,7 +200,11 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
         automation: { mode: "ai-only", aiRequired: true, operational: aiConfigured && aiHealth.state === "operational" },
         ai: { configured: aiConfigured, updatedAt: ai.updatedAt, model: env.AI_MODEL, health: aiHealth },
         whatsapp: { ...evolutionState, webhook: webhookState },
-        coordinator: { configured: coordinator.configured, updatedAt: coordinator.updatedAt },
+        coordinator: {
+          configured: coordinator.configured,
+          updatedAt: coordinator.updatedAt,
+          masked: maskCoordinatorPhone(coordinatorPhone),
+        },
       },
       metrics: { ...(dashboard as Record<string, unknown>), followupSettings },
       operations: { embeddings, queue, retentionDays: env.DATA_RETENTION_DAYS },
@@ -248,7 +253,7 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     const digits = phone.replace(/\D/g, "");
     if (digits.length < 10 || digits.length > 15) throw httpError(400, "Número do coordenador inválido");
     await secrets.set("COORDINATOR_WHATSAPP", digits);
-    return { configured: true, updatedAt: new Date().toISOString(), masked: `••••${digits.slice(-4)}` };
+    return { configured: true, updatedAt: new Date().toISOString(), masked: maskCoordinatorPhone(digits) };
   });
 
   app.delete("/dashboard/settings/coordinator-phone", async (request) => {
@@ -554,6 +559,12 @@ function publicNotification(notification: import("../domain/types.js").Coordinat
     recipientMasked: digits ? `••••${digits.slice(-4)}` : null,
     deliveryMeaning: notification.status === "accepted" ? "Aceita pelo provedor; leitura não confirmada" : null,
   };
+}
+
+function maskCoordinatorPhone(phone: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  return digits.length >= 4 ? `••••••${digits.slice(-4)}` : null;
 }
 
 function httpError(statusCode: number, message: string): Error & { statusCode: number } {

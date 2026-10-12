@@ -270,6 +270,7 @@ function renderOverview(overview) {
   byId("connect-whatsapp").disabled = whatsappConnected || qrSessionActive;
   byId("connect-whatsapp").textContent = whatsappConnected ? "WhatsApp conectado" : (qrSessionActive ? "Aguardando conexão..." : "Gerar QR Code");
   setBadge("integration-coordinator-state", services.coordinator?.configured ? "Configurado" : "Pendente", services.coordinator?.configured ? "ok" : "warning");
+  renderCoordinatorPhone(services.coordinator?.masked ?? null);
 
   renderPipeline(Array.isArray(metrics.stages) ? metrics.stages : []);
   renderFollowup(metrics.followup ?? {}, metrics.followupSettings ?? {});
@@ -316,6 +317,7 @@ async function saveCoordinatorPhone(event) {
   try {
     const result = await api("/dashboard/settings/coordinator-phone", { method: "PUT", body: { phone: input.value } });
     input.value = "";
+    renderCoordinatorPhone(result.masked ?? null);
     setFeedback(byId("coordinator-feedback"), `Número salvo (${result.masked}).`, "success");
     await refreshOverview();
   } catch (error) {
@@ -323,6 +325,12 @@ async function saveCoordinatorPhone(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+function renderCoordinatorPhone(masked) {
+  const identification = byId("coordinator-phone-identification");
+  if (!identification) return;
+  identification.textContent = masked ? `Número configurado: ${masked}` : "Nenhum número configurado";
 }
 
 async function loadLeads(filter = "all") {

@@ -187,7 +187,8 @@
         <div class="integration-summary">
           <article class="panel"><span class="integration-icon">AI</span><h3>OpenAI</h3><p>Motor obrigatório do atendimento automático. A chave fica cifrada no servidor.</p><span id="integration-ai-state" class="badge warning">Obrigatória</span></article>
           <article class="panel"><span class="integration-icon">WA</span><h3>Evolution API</h3><p>Conexão segura com o WhatsApp da Bioecos.</p><span id="integration-wa-state" class="badge neutral">Desconectado</span></article>
-          <article class="panel"><span class="integration-icon">CO</span><h3>Coordenador</h3><p>Número que recebe alertas de leads quentes. Ele é armazenado cifrado e não volta ao navegador.</p><span id="integration-coordinator-state" class="badge warning">Pendente</span>
+          <article class="panel"><span class="integration-icon">CO</span><h3>Coordenador</h3><p>Número que recebe alertas de leads quentes. Ele é armazenado cifrado e somente sua identificação protegida é exibida.</p><span id="integration-coordinator-state" class="badge warning">Pendente</span>
+            <p id="coordinator-phone-identification" class="coordinator-phone-identification">Nenhum número configurado</p>
             <form id="coordinator-form"><label for="coordinator-phone">WhatsApp com DDI</label><input id="coordinator-phone" inputmode="tel" placeholder="5521999999999" required><button class="primary-action wide-action" type="submit">Salvar número</button><p id="coordinator-feedback" class="inline-feedback"></p></form>
           </article>
         </div>
