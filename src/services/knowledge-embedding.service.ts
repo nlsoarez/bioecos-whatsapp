@@ -45,6 +45,14 @@ export class KnowledgeEmbeddingService {
         if (!embedding || embedding.length !== 1536) throw new Error(`Embedding inválido para o chunk ${chunk.id}`);
         await this.pool.query("UPDATE knowledge_chunks SET embedding = $2::vector WHERE id = $1", [chunk.id, `[${embedding.join(",")}]`]);
       }
+      await this.pool.query(
+        `UPDATE managed_knowledge_entries m SET status='active', updated_at=now()
+         WHERE m.active=true AND m.status='processing' AND m.deleted_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM knowledge_chunks kc WHERE kc.document_id=m.document_id AND kc.embedding IS NULL)`,
+      ).catch((error: unknown) => {
+        const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+        if (code !== "42P01") throw error;
+      });
       this.updatedAt = new Date().toISOString();
     } catch (error) {
       this.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);

@@ -3,6 +3,7 @@ import type { AgentClient, AgentToolExecutor } from "../src/services/openai.serv
 import type { ChatMessage, ContactContext, InboundMessage, KnowledgeHit } from "../src/domain/types.js";
 import type { MessageSender } from "../src/services/evolution.service.js";
 import { ConversationService } from "../src/services/conversation.service.js";
+import type { KnowledgeManagement } from "../src/services/knowledge-management.service.js";
 import { InMemoryRepository } from "./support/in-memory.repository.js";
 
 class FakeAgent implements AgentClient {
@@ -29,9 +30,14 @@ class FakeAgent implements AgentClient {
 
 class FakeSender implements MessageSender {
   sent: string[] = [];
+  mediaSent: string[] = [];
   async sendText(_phone: string, text: string) {
     this.sent.push(text);
     return { externalMessageId: `sent-${this.sent.length}`, raw: {} };
+  }
+  async sendMedia(_phone: string, media: { mimeType: string; filename: string; data: Buffer; caption: string }) {
+    this.mediaSent.push(media.filename);
+    return { externalMessageId: `media-${this.mediaSent.length}`, raw: {} };
   }
 }
 
@@ -39,15 +45,26 @@ function inbound(content: string, id = `msg-${Math.random()}`): InboundMessage {
   return { externalMessageId: id, phone: "5521971970274", pushName: "Cliente", content, timestamp: new Date(), raw: {} };
 }
 
-function setup(knowledge = true) {
+function setup(knowledge = true, knowledgeManagement?: KnowledgeManagement) {
   const repository = new InMemoryRepository();
   if (knowledge) repository.knowledge = [{ id: "k1", title: "Base oficial", content: "Informação oficial", score: 1 }];
   const agent = new FakeAgent();
   const sender = new FakeSender();
-  return { repository, agent, sender, service: new ConversationService(repository, agent, sender) };
+  return { repository, agent, sender, service: new ConversationService(repository, agent, sender, undefined, knowledgeManagement) };
 }
 
 describe("homologação Bioecos", () => {
+  it("envia uma imagem cadastrada quando o contato pede material visual", async () => {
+    const manager = {
+      findRelevantMedia: async () => ({ id: "media-1", filename: "fitoterapia.png", mimeType: "image/png", data: Buffer.from("imagem"), description: "Programa visual do curso de Fitoterapia", courseName: "Fitoterapia" }),
+    } as unknown as KnowledgeManagement;
+    const s = setup(true, manager);
+    const result = await s.service.handle(inbound("Pode me enviar uma imagem do curso de Fitoterapia?"));
+    expect(result.response).toContain("Programa visual");
+    expect(s.sender.mediaSent).toEqual(["fitoterapia.png"]);
+    expect(s.agent.calls).toBe(0);
+  });
+
   it("1. identifica pergunta direta sobre Aromaterapia e consulta a base", async () => {
     const s = setup();
     const result = await s.service.handle(inbound("Quero saber sobre o curso de aromaterapia."));

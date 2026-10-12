@@ -10,6 +10,7 @@ export interface SendResult {
 
 export interface MessageSender {
   sendText(phone: string, text: string): Promise<SendResult>;
+  sendMedia?(phone: string, media: { mimeType: string; filename: string; data: Buffer; caption: string }): Promise<SendResult>;
 }
 
 export interface EvolutionConnectionState {
@@ -97,6 +98,44 @@ export class EvolutionService implements MessageSender {
       }
       await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
     }
+    throw lastError;
+  }
+
+  async sendMedia(phone: string, media: { mimeType: string; filename: string; data: Buffer; caption: string }): Promise<SendResult> {
+    if (!this.env.EVOLUTION_API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
+    if (!/^image\/(png|jpeg|webp)$/.test(media.mimeType) || media.data.length === 0 || media.data.length > 5 * 1024 * 1024) {
+      throw new Error("Mídia inválida");
+    }
+    const normalizedPhone = normalizePhone(phone);
+    const fingerprint = outboundFingerprint(normalizedPhone, media.caption);
+    this.rememberAutomatedOutbound(fingerprint);
+    const url = `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/message/sendMedia/${encodeURIComponent(this.env.EVOLUTION_INSTANCE_NAME)}`;
+    const body = JSON.stringify({ number: normalizedPhone, mediatype: "image", mimetype: media.mimeType,
+      caption: media.caption, media: `data:${media.mimeType};base64,${media.data.toString("base64")}`, fileName: media.filename });
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= this.env.EVOLUTION_MAX_RETRIES; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.env.EVOLUTION_REQUEST_TIMEOUT_MS);
+      try {
+        const response = await this.request(url, { method: "POST",
+          headers: { "content-type": "application/json", apikey: this.env.EVOLUTION_API_KEY }, body, signal: controller.signal });
+        const raw = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (response.ok) {
+          const key = raw.key as Record<string, unknown> | undefined;
+          return { externalMessageId: String(key?.id ?? `evolution-media:${Date.now()}`), raw };
+        }
+        if (response.status < 500 || attempt === this.env.EVOLUTION_MAX_RETRIES) throw new EvolutionHttpError(response.status, response.status >= 500);
+        lastError = new Error(`Evolution API respondeu ${response.status}`);
+      } catch (error) {
+        lastError = error;
+        if ((error instanceof EvolutionHttpError && !error.retryable) || attempt === this.env.EVOLUTION_MAX_RETRIES) {
+          this.automatedOutbounds.delete(fingerprint);
+          throw error;
+        }
+      } finally { clearTimeout(timer); }
+      await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+    }
+    this.automatedOutbounds.delete(fingerprint);
     throw lastError;
   }
 

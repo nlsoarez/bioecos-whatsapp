@@ -7,6 +7,7 @@ import type { AgentClient } from "./openai.service.js";
 import { assessLead } from "./lead-assessment.service.js";
 import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "./coordinator-notification.service.js";
 import { ToolService } from "./tool.service.js";
+import type { KnowledgeManagement } from "./knowledge-management.service.js";
 
 const HANDOFF_MESSAGE = "Entendi. Registrei o que você precisa e a coordenação da equipe responsável continuará o atendimento por aqui.";
 const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e encerrei os acompanhamentos automáticos.";
@@ -14,6 +15,7 @@ const TEMPORARY_ERROR_MESSAGE = "Estou com uma instabilidade temporária e não 
 const GREETING_PATTERN = /^\s*(oi+|ol[aá]|bom dia|boa tarde|boa noite|quem [ée] voc[eê]|tudo bem)[!?.\s]*$/i;
 const FOLLOWUP_OPT_OUT_PATTERN = /^(?:sair|parar|cancelar|n[aã]o quero (?:mais )?(?:mensagens|acompanhamento)|remova meu contato)[.!\s]*$/i;
 const COURSE_OVERVIEW_PATTERN = /(?:quais?|lista|op[cç][oõ]es?|todos?).{0,30}(?:cursos?|forma[cç][oõ]es?)|(?:cursos?|forma[cç][oõ]es?).{0,30}(?:tem|t[eê]m|oferece|dispon[ií]ve)/i;
+const IMAGE_REQUEST_PATTERN = /\b(imagem|imagens|foto|fotos|folder|cartaz|divulga[cç][aã]o)\b/i;
 const COURSE_CONTENT_SUMMARIES: Record<string, string> = {
   "Plantas Medicinais": "Nos conteúdos publicados pela Bioecos, Plantas Medicinais inclui identificação das plantas, escolha da parte utilizada, colheita e extração de princípios ativos, com preparo por infusão, decocção e tinturas.",
   Fitoterapia: "Nos conteúdos publicados pela Bioecos, Fitoterapia inclui tinturas, terapêutica da fitoterapia, formas farmacêuticas, uso de tinturas em formulações e produção de Produtos Tradicionais Fitoterápicos.",
@@ -29,6 +31,7 @@ export class ConversationService {
     private readonly agent: AgentClient,
     private readonly sender: MessageSender,
     private readonly notifier: CoordinatorNotifier = new NoopCoordinatorNotifier(),
+    private readonly knowledgeManagement?: KnowledgeManagement,
   ) {}
 
   async handle(message: InboundMessage): Promise<{ status: "ignored" | "duplicate" | "paused" | "responded"; response?: string }> {
@@ -70,6 +73,16 @@ export class ConversationService {
     }
 
     const selectedCourse = assessment.course ?? ingestion.context.course;
+    if (IMAGE_REQUEST_PATTERN.test(message.content) && this.knowledgeManagement && this.sender.sendMedia) {
+      const media = await this.knowledgeManagement.findRelevantMedia(`${selectedCourse ?? ""} ${message.content}`);
+      if (media) {
+        const caption = media.description || `Imagem de ${media.courseName ?? "um conteúdo da Bioecos"}`;
+        const sent = await this.sender.sendMedia(message.phone, { mimeType: media.mimeType, filename: media.filename, data: media.data, caption });
+        await this.repository.saveOutbound(ingestion.context.conversationId,
+          sent.externalMessageId || `outbound:${randomUUID()}`, `[Imagem] ${caption}`, sent.raw);
+        return { status: "responded", response: caption };
+      }
+    }
     const experienceReply = respondToExperienceLevel(message.content, recentMessages, selectedCourse);
     if (experienceReply) {
       await this.repository.addNote(ingestion.context, `Experiência informada: ${experienceReply.level}`);

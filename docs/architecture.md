@@ -12,6 +12,7 @@ O sistema é um monólito modular. Separar em vários serviços agora criaria cu
 - `services/webhook-job`: fila PostgreSQL durável com `SKIP LOCKED` e retry;
 - `services/monthly-followup`: régua mensal limitada aos dias 30, 60 e 90;
 - `services/knowledge-embedding`: geração automática dos vetores pendentes;
+- `services/knowledge-management`: expansão incremental administrável, versões, documentos, imagens e integração com as tabelas RAG existentes;
 - `services/data-retention`: expurgo periódico conforme retenção configurada;
 - `services/openai`: Responses API e ciclo de tools;
 - `services/tool`: validação de argumentos e autorização de ações;

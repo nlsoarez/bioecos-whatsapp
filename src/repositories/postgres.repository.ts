@@ -211,7 +211,9 @@ export class PostgresRepository implements BioecosRepository {
           greatest(coalesce(1 - (kc.embedding <=> $2::vector), 0),
             ts_rank_cd(kc.search_vector, websearch_to_tsquery('portuguese', $1))) AS score
          FROM knowledge_chunks kc JOIN knowledge_documents kd ON kd.id = kc.document_id
-         WHERE kd.active = true AND (kc.embedding IS NOT NULL OR kc.search_vector @@ websearch_to_tsquery('portuguese', $1))
+         LEFT JOIN managed_knowledge_entries m ON m.document_id = kd.id
+         WHERE kd.active = true AND (m.id IS NULL OR (m.active=true AND m.status='active' AND m.deleted_at IS NULL))
+           AND (kc.embedding IS NOT NULL OR kc.search_vector @@ websearch_to_tsquery('portuguese', $1))
          ORDER BY score DESC LIMIT $3`,
         [query, vector, limit],
       );
@@ -221,7 +223,9 @@ export class PostgresRepository implements BioecosRepository {
       `SELECT kc.id, kc.title, kc.content,
         ts_rank_cd(kc.search_vector, websearch_to_tsquery('portuguese', $1)) AS score
        FROM knowledge_chunks kc JOIN knowledge_documents kd ON kd.id = kc.document_id
-       WHERE kd.active = true AND kc.search_vector @@ websearch_to_tsquery('portuguese', $1)
+       LEFT JOIN managed_knowledge_entries m ON m.document_id = kd.id
+       WHERE kd.active = true AND (m.id IS NULL OR (m.active=true AND m.status='active' AND m.deleted_at IS NULL))
+         AND kc.search_vector @@ websearch_to_tsquery('portuguese', $1)
        ORDER BY score DESC LIMIT $2`,
       [query, limit],
     );

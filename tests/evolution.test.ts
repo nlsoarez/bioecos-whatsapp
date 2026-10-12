@@ -154,6 +154,30 @@ describe("Evolution webhook v2", () => {
     expect(body).toEqual({ number: "5521971970274", text: "Olá" });
   });
 
+  it("envia imagem persistida no formato da Evolution v2", async () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgresql://test:test@localhost/test",
+      EVOLUTION_API_URL: "https://evolution.example.com",
+      EVOLUTION_API_KEY: "evolution-secret",
+      EVOLUTION_INSTANCE_NAME: "bioecos",
+      ADMIN_API_KEY: "admin-secret-key",
+    });
+    let url = "";
+    let body: Record<string, unknown> = {};
+    const request = async (input: string | URL | Request, init?: RequestInit) => {
+      url = String(input);
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ key: { id: "image-1" } }), { status: 201 });
+    };
+    const evolution = new EvolutionService(env, request as typeof fetch);
+    await expect(evolution.sendMedia("(21) 97197-0274", {
+      mimeType: "image/png", filename: "curso.png", data: Buffer.from("imagem"), caption: "Curso de Fitoterapia",
+    })).resolves.toMatchObject({ externalMessageId: "image-1" });
+    expect(url).toContain("/message/sendMedia/bioecos");
+    expect(body).toMatchObject({ number: "5521971970274", mediatype: "image", mimetype: "image/png", fileName: "curso.png", caption: "Curso de Fitoterapia" });
+    expect(String(body.media)).toMatch(/^data:image\/png;base64,/);
+  });
+
   it("não mantém eco automatizado quando o envio falha definitivamente", async () => {
     const env = loadEnv({
       DATABASE_URL: "postgresql://test:test@localhost/test",

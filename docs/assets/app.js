@@ -21,6 +21,9 @@ let qrRefreshInFlight = false;
 let qrSessionGeneration = 0;
 let openedHash = "";
 let ignoredNumbers = [];
+let knowledgeEntries = [];
+let knowledgeMedia = [];
+let mediaObjectUrls = [];
 
 byId("toggle-password")?.addEventListener("click", () => toggleVisibility("password", "toggle-password"));
 byId("toggle-api-key")?.addEventListener("click", () => toggleVisibility("openai-key", "toggle-api-key"));
@@ -36,6 +39,17 @@ byId("coordinator-form")?.addEventListener("submit", saveCoordinatorPhone);
 byId("ignored-number-form")?.addEventListener("submit", saveIgnoredNumber);
 byId("cancel-ignored-edit")?.addEventListener("click", resetIgnoredNumberForm);
 byId("ignored-search")?.addEventListener("input", debounce(() => void loadIgnoredNumbers(), 250));
+document.querySelectorAll(".knowledge-tabs button").forEach((button) => button.addEventListener("click", () => showKnowledgeTab(button.dataset.knowledgeTab)));
+byId("knowledge-form")?.addEventListener("submit", saveKnowledge);
+byId("cancel-knowledge-edit")?.addEventListener("click", resetKnowledgeForm);
+byId("knowledge-kind")?.addEventListener("change", updateCourseFieldsVisibility);
+byId("knowledge-search")?.addEventListener("input", debounce(() => void loadKnowledge(), 250));
+byId("knowledge-filter-kind")?.addEventListener("change", () => void loadKnowledge());
+byId("knowledge-document-form")?.addEventListener("submit", uploadKnowledgeDocument);
+byId("knowledge-image-form")?.addEventListener("submit", saveKnowledgeImage);
+byId("cancel-image-edit")?.addEventListener("click", resetKnowledgeImageForm);
+byId("image-search")?.addEventListener("input", debounce(() => void loadKnowledgeMedia(), 250));
+byId("knowledge-test-form")?.addEventListener("submit", testKnowledge);
 document.querySelectorAll("#lead-filters button").forEach((button) => {
   button.addEventListener("click", () => loadLeads(button.dataset.filter));
 });
@@ -96,6 +110,18 @@ async function api(path, options = {}) {
   }
   if (!response.ok) throw new Error(result.error ?? `Falha na comunicação (${response.status})`);
   return result;
+}
+
+async function apiBlob(path) {
+  const token = sessionStorage.getItem(SESSION_KEY);
+  if (!token) throw new Error("Sua sessão expirou. Entre novamente.");
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  if (response.status === 401) { logout(); throw new Error("Sua sessão expirou. Entre novamente."); }
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.error ?? `Falha na comunicação (${response.status})`);
+  }
+  return response.blob();
 }
 
 async function restoreSession() {
@@ -674,7 +700,371 @@ function showSection(section) {
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.section === section));
   if (section === "leads") loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");
   if (section === "ignored-numbers") loadIgnoredNumbers();
+  if (section === "knowledge") { void loadKnowledge(); void loadKnowledgeMedia(); }
 }
+
+function showKnowledgeTab(tab = "entries") {
+  const panelTab = tab === "courses" ? "entries" : tab;
+  document.querySelectorAll(".knowledge-tab").forEach((element) => { element.hidden = element.id !== `knowledge-tab-${panelTab}`; });
+  document.querySelectorAll(".knowledge-tabs button").forEach((button) => button.classList.toggle("active", button.dataset.knowledgeTab === tab));
+  if (tab === "courses") {
+    byId("knowledge-kind").value = "course";
+    byId("knowledge-filter-kind").value = "course";
+    updateCourseFieldsVisibility();
+  }
+  if (panelTab === "entries") void loadKnowledge();
+  if (tab === "images") void loadKnowledgeMedia();
+  if (tab === "history") void loadKnowledgeHistory();
+}
+
+async function loadKnowledge() {
+  const list = byId("knowledge-list");
+  if (!list) return;
+  list.replaceChildren(emptyState("Carregando conteúdos..."));
+  const search = byId("knowledge-search").value.trim();
+  const kind = byId("knowledge-filter-kind").value;
+  try {
+    const result = await api(`/dashboard/knowledge?search=${encodeURIComponent(search)}&kind=${encodeURIComponent(kind)}`);
+    knowledgeEntries = Array.isArray(result.entries) ? result.entries : [];
+    renderKnowledge();
+    populateKnowledgeEntrySelect();
+  } catch (error) { list.replaceChildren(emptyState(error.message)); }
+}
+
+function renderKnowledge() {
+  const list = byId("knowledge-list");
+  list.replaceChildren();
+  byId("knowledge-count").textContent = String(knowledgeEntries.length);
+  if (!knowledgeEntries.length) return list.append(emptyState("Nenhum conteúdo adicional."));
+  knowledgeEntries.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = `knowledge-row${entry.active ? "" : " inactive"}`;
+    const main = document.createElement("div");
+    const heading = document.createElement("div");
+    heading.className = "knowledge-row-heading";
+    const title = document.createElement("strong");
+    title.textContent = entry.title;
+    const status = document.createElement("span");
+    status.className = `badge ${knowledgeStatusClass(entry.status)}`;
+    status.textContent = knowledgeStatusLabel(entry.status);
+    heading.append(title, status);
+    const meta = document.createElement("span");
+    meta.className = "knowledge-meta";
+    meta.textContent = [knowledgeKindLabel(entry.kind), entry.category, entry.courseName, `${Number(entry.imageCount) || 0} imagem(ns)`].filter(Boolean).join(" · ");
+    const summary = document.createElement("p");
+    summary.textContent = String(entry.content || "").slice(0, 260);
+    main.append(heading, meta, summary);
+    if (entry.conflictDetails) {
+      const conflict = document.createElement("small"); conflict.className = "knowledge-conflict"; conflict.textContent = entry.conflictDetails; main.append(conflict);
+    }
+    const actions = document.createElement("div");
+    actions.className = "knowledge-row-actions";
+    actions.append(
+      knowledgeAction(entry.active ? "Desativar" : "Ativar", () => void toggleKnowledge(entry)),
+      knowledgeAction("Editar", () => editKnowledge(entry)),
+      knowledgeAction("Excluir", () => void deleteKnowledge(entry), true),
+    );
+    row.append(main, actions);
+    list.append(row);
+  });
+}
+
+function knowledgeAction(label, action, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `secondary-action${danger ? " danger-action" : ""}`;
+  button.textContent = label;
+  button.addEventListener("click", action);
+  return button;
+}
+
+function knowledgePayload(confirmConflict) {
+  const structuredData = {};
+  const fields = {
+    modality: "course-modality", workload: "course-workload", duration: "course-duration", price: "course-price",
+    dates: "course-dates", schedule: "course-schedule", location: "course-location", prerequisites: "course-prerequisites",
+    availability: "course-availability", registrationUrl: "course-registration-url",
+  };
+  Object.entries(fields).forEach(([key, id]) => { structuredData[key] = byId(id).value.trim() || null; });
+  return {
+    kind: byId("knowledge-kind").value,
+    category: byId("knowledge-category").value.trim(),
+    title: byId("knowledge-title").value.trim(),
+    content: byId("knowledge-content").value.trim(),
+    courseName: byId("knowledge-course").value.trim() || null,
+    structuredData,
+    active: byId("knowledge-active").checked,
+    ...(confirmConflict === undefined ? {} : { confirmConflict }),
+  };
+}
+
+async function saveKnowledge(event) {
+  event.preventDefault();
+  const currentId = byId("knowledge-id").value;
+  const button = byId("save-knowledge");
+  const feedback = byId("knowledge-form-feedback");
+  button.disabled = true;
+  try {
+    const path = currentId ? `/dashboard/knowledge/${encodeURIComponent(currentId)}` : "/dashboard/knowledge";
+    let result = await api(path, { method: currentId ? "PATCH" : "POST", body: knowledgePayload() });
+    if (result.entry?.status === "conflict" && window.confirm(`${result.entry.conflictDetails}\n\nVocê revisou a divergência e deseja publicar mesmo assim?`)) {
+      result = await api(`/dashboard/knowledge/${encodeURIComponent(result.entry.id)}`, { method: "PATCH", body: knowledgePayload(true) });
+    }
+    const conflicted = result.entry?.status === "conflict";
+    resetKnowledgeForm();
+    setFeedback(feedback, conflicted ? "Conteúdo salvo desativado por possível divergência. Revise antes de ativar." : "Conteúdo salvo. A vetorização será concluída em segundo plano.", conflicted ? "error" : "success");
+    await loadKnowledge();
+  } catch (error) { setFeedback(feedback, error.message, "error"); }
+  finally { button.disabled = false; }
+}
+
+function editKnowledge(entry) {
+  byId("knowledge-id").value = entry.id;
+  byId("knowledge-kind").value = entry.kind;
+  byId("knowledge-category").value = entry.category || "Geral";
+  byId("knowledge-title").value = entry.title || "";
+  byId("knowledge-course").value = entry.courseName || "";
+  byId("knowledge-content").value = entry.content || "";
+  byId("knowledge-active").checked = Boolean(entry.active);
+  const fields = { modality: "course-modality", workload: "course-workload", duration: "course-duration", price: "course-price", dates: "course-dates", schedule: "course-schedule", location: "course-location", prerequisites: "course-prerequisites", availability: "course-availability", registrationUrl: "course-registration-url" };
+  Object.entries(fields).forEach(([key, id]) => { byId(id).value = entry.structuredData?.[key] || ""; });
+  byId("knowledge-form-title").textContent = "Editar conhecimento";
+  byId("save-knowledge").textContent = "Salvar alterações";
+  byId("cancel-knowledge-edit").hidden = false;
+  updateCourseFieldsVisibility();
+  byId("knowledge-title").focus();
+}
+
+function resetKnowledgeForm() {
+  byId("knowledge-form").reset();
+  byId("knowledge-id").value = "";
+  byId("knowledge-category").value = "Geral";
+  byId("knowledge-active").checked = true;
+  byId("knowledge-form-title").textContent = "Adicionar conhecimento";
+  byId("save-knowledge").textContent = "Adicionar";
+  byId("cancel-knowledge-edit").hidden = true;
+  updateCourseFieldsVisibility();
+}
+
+function updateCourseFieldsVisibility() { byId("course-fields").hidden = byId("knowledge-kind").value !== "course"; }
+
+async function toggleKnowledge(entry) {
+  try {
+    const payload = { ...entry, active: !entry.active, structuredData: entry.structuredData || {}, confirmConflict: true };
+    await api(`/dashboard/knowledge/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: payload });
+    await loadKnowledge();
+  } catch (error) { window.alert(error.message); }
+}
+
+async function deleteKnowledge(entry) {
+  if (!window.confirm(`Excluir “${entry.title}”? O histórico será preservado para auditoria.`)) return;
+  try {
+    await api(`/dashboard/knowledge/${encodeURIComponent(entry.id)}`, { method: "DELETE" });
+    if (byId("knowledge-id").value === entry.id) resetKnowledgeForm();
+    await loadKnowledge();
+  } catch (error) { window.alert(error.message); }
+}
+
+async function uploadKnowledgeDocument(event) {
+  event.preventDefault();
+  const file = byId("document-file").files[0];
+  const button = byId("upload-document");
+  const feedback = byId("document-feedback");
+  if (!file) return setFeedback(feedback, "Selecione um documento.", "error");
+  if (file.size > 4 * 1024 * 1024) return setFeedback(feedback, "O documento excede 4 MB.", "error");
+  button.disabled = true;
+  try {
+    await api("/dashboard/knowledge/documents", { method: "POST", body: {
+      filename: file.name, mimeType: file.type || mimeTypeFromFilename(file.name), base64: await fileToBase64(file),
+      title: byId("document-title").value.trim(), category: byId("document-category").value.trim(),
+      courseName: byId("document-course").value.trim() || null, active: byId("document-active").checked,
+    } });
+    byId("knowledge-document-form").reset(); byId("document-category").value = "Documentos"; byId("document-active").checked = true;
+    setFeedback(feedback, "Documento validado e enviado para indexação.", "success");
+    await loadKnowledge();
+  } catch (error) { setFeedback(feedback, error.message, "error"); }
+  finally { button.disabled = false; }
+}
+
+async function loadKnowledgeMedia() {
+  const list = byId("image-list");
+  if (!list) return;
+  list.replaceChildren(emptyState("Carregando imagens..."));
+  try {
+    const result = await api(`/dashboard/knowledge/media?search=${encodeURIComponent(byId("image-search").value.trim())}`);
+    knowledgeMedia = Array.isArray(result.media) ? result.media : [];
+    await renderKnowledgeMedia();
+  } catch (error) { list.replaceChildren(emptyState(error.message)); }
+}
+
+async function renderKnowledgeMedia() {
+  const list = byId("image-list");
+  mediaObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  mediaObjectUrls = [];
+  list.replaceChildren();
+  byId("image-count").textContent = String(knowledgeMedia.length);
+  if (!knowledgeMedia.length) return list.append(emptyState("Nenhuma imagem cadastrada."));
+  for (const item of knowledgeMedia) {
+    const card = document.createElement("article");
+    card.className = `media-card${item.active ? "" : " inactive"}`;
+    const image = document.createElement("img");
+    image.className = "media-preview";
+    image.alt = item.description;
+    image.loading = "lazy";
+    try {
+      const blob = await apiBlob(`/dashboard/knowledge/media/${encodeURIComponent(item.id)}/file`);
+      const url = URL.createObjectURL(blob); mediaObjectUrls.push(url); image.src = url;
+    } catch { image.alt = "Imagem indisponível"; }
+    const body = document.createElement("div");
+    const title = document.createElement("strong"); title.textContent = item.description;
+    const meta = document.createElement("small"); meta.textContent = [item.courseName, item.category, formatBytes(item.byteSize), item.active ? "Ativa" : "Inativa"].filter(Boolean).join(" · ");
+    const actions = document.createElement("div"); actions.className = "knowledge-row-actions";
+    actions.append(
+      knowledgeAction(item.active ? "Desativar" : "Ativar", () => void toggleKnowledgeImage(item)),
+      knowledgeAction("Editar", () => editKnowledgeImage(item)),
+      knowledgeAction("Excluir", () => void deleteKnowledgeImage(item), true),
+    );
+    body.append(title, meta, actions); card.append(image, body); list.append(card);
+  }
+}
+
+function imagePayload(item, base64) {
+  return {
+    entryId: byId("image-entry").value || null,
+    courseName: byId("image-course").value.trim() || null,
+    category: byId("image-category").value.trim() || "Imagens",
+    description: byId("image-description").value.trim(),
+    keywords: byId("image-keywords").value.split(",").map((value) => value.trim()).filter(Boolean),
+    active: byId("image-active").checked,
+    ...(item ? { filename: item.name, mimeType: item.type, base64 } : {}),
+  };
+}
+
+async function saveKnowledgeImage(event) {
+  event.preventDefault();
+  const id = byId("image-id").value;
+  const file = byId("image-file").files[0];
+  const feedback = byId("image-feedback");
+  if (!id && !file) return setFeedback(feedback, "Selecione uma imagem.", "error");
+  if (file && file.size > 5 * 1024 * 1024) return setFeedback(feedback, "A imagem excede 5 MB.", "error");
+  const button = byId("save-image"); button.disabled = true;
+  try {
+    const base64 = file ? await fileToBase64(file) : undefined;
+    await api(id ? `/dashboard/knowledge/media/${encodeURIComponent(id)}` : "/dashboard/knowledge/media", {
+      method: id ? "PATCH" : "POST", body: imagePayload(file, base64),
+    });
+    resetKnowledgeImageForm();
+    setFeedback(feedback, id ? "Imagem atualizada." : "Imagem cadastrada e pronta para envio pelo WhatsApp.", "success");
+    await loadKnowledgeMedia();
+  } catch (error) { setFeedback(feedback, error.message, "error"); }
+  finally { button.disabled = false; }
+}
+
+function editKnowledgeImage(item) {
+  byId("image-id").value = item.id;
+  byId("image-description").value = item.description || "";
+  byId("image-course").value = item.courseName || "";
+  byId("image-category").value = item.category || "Imagens";
+  byId("image-keywords").value = Array.isArray(item.keywords) ? item.keywords.join(", ") : "";
+  byId("image-entry").value = item.entryId || "";
+  byId("image-active").checked = Boolean(item.active);
+  byId("save-image").textContent = "Salvar alterações";
+  byId("cancel-image-edit").hidden = false;
+  byId("image-description").focus();
+}
+
+function resetKnowledgeImageForm() {
+  byId("knowledge-image-form").reset();
+  byId("image-id").value = "";
+  byId("image-category").value = "Imagens";
+  byId("image-active").checked = true;
+  byId("save-image").textContent = "Salvar imagem";
+  byId("cancel-image-edit").hidden = true;
+}
+
+async function toggleKnowledgeImage(item) {
+  try {
+    await api(`/dashboard/knowledge/media/${encodeURIComponent(item.id)}`, { method: "PATCH", body: {
+      entryId: item.entryId, courseName: item.courseName, category: item.category, description: item.description,
+      keywords: item.keywords || [], active: !item.active,
+    } });
+    await loadKnowledgeMedia();
+  } catch (error) { window.alert(error.message); }
+}
+
+async function deleteKnowledgeImage(item) {
+  if (!window.confirm(`Excluir a imagem “${item.description}”?`)) return;
+  try {
+    await api(`/dashboard/knowledge/media/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+    if (byId("image-id").value === item.id) resetKnowledgeImageForm();
+    await loadKnowledgeMedia();
+  } catch (error) { window.alert(error.message); }
+}
+
+function populateKnowledgeEntrySelect() {
+  const select = byId("image-entry");
+  if (!select) return;
+  const selected = select.value;
+  select.replaceChildren();
+  const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Sem vínculo"; select.append(empty);
+  knowledgeEntries.forEach((entry) => { const option = document.createElement("option"); option.value = entry.id; option.textContent = entry.title; select.append(option); });
+  if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+}
+
+async function loadKnowledgeHistory() {
+  const list = byId("knowledge-history");
+  list.replaceChildren(emptyState("Carregando histórico..."));
+  try {
+    const result = await api("/dashboard/knowledge/history");
+    const history = Array.isArray(result.history) ? result.history : [];
+    list.replaceChildren();
+    if (!history.length) return list.append(emptyState("Nenhuma alteração registrada."));
+    history.forEach((version) => {
+      const row = document.createElement("div"); row.className = "knowledge-row history-row";
+      const body = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = `${version.snapshot?.title || "Conteúdo"} · versão ${version.version}`;
+      const meta = document.createElement("span"); meta.className = "knowledge-meta"; meta.textContent = `${version.actor} · ${formatDateTime(version.createdAt)} · ${knowledgeStatusLabel(version.snapshot?.status)}`;
+      body.append(title, meta); row.append(body); list.append(row);
+    });
+  } catch (error) { list.replaceChildren(emptyState(error.message)); }
+}
+
+async function testKnowledge(event) {
+  event.preventDefault();
+  const resultBox = byId("knowledge-test-result");
+  const button = byId("run-knowledge-test");
+  resultBox.replaceChildren(emptyState("Consultando a base e a IA...")); button.disabled = true;
+  try {
+    const result = await api("/dashboard/knowledge/test", { method: "POST", body: { question: byId("knowledge-test-question").value.trim() } });
+    resultBox.replaceChildren();
+    const answer = document.createElement("p"); answer.className = "test-answer"; answer.textContent = result.answer;
+    const sourcesTitle = document.createElement("strong"); sourcesTitle.textContent = "Fontes recuperadas";
+    const sources = document.createElement("ul");
+    (result.sources || []).forEach((source) => { const item = document.createElement("li"); item.textContent = `${source.title} · relevância ${Number(source.score || 0).toFixed(3)}`; sources.append(item); });
+    if (!sources.childElementCount) { const item = document.createElement("li"); item.textContent = "Nenhuma fonte recuperada."; sources.append(item); }
+    resultBox.append(answer, sourcesTitle, sources);
+  } catch (error) { resultBox.replaceChildren(emptyState(error.message)); }
+  finally { button.disabled = false; }
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+    reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function mimeTypeFromFilename(filename) {
+  const extension = String(filename).toLowerCase().split(".").pop();
+  return ({ txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json", pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" })[extension] || "application/octet-stream";
+}
+
+function knowledgeStatusLabel(status) { return ({ processing: "Processando", active: "Ativo", inactive: "Inativo", conflict: "Revisão necessária", error: "Erro" })[status] || "Inativo"; }
+function knowledgeStatusClass(status) { return status === "active" ? "ok" : status === "processing" ? "warning" : status === "conflict" || status === "error" ? "danger" : "neutral"; }
+function knowledgeKindLabel(kind) { return ({ knowledge: "Conhecimento", course: "Curso", qa: "Pergunta e resposta", institutional: "Institucional", rule: "Regra", procedure: "Procedimento", document: "Documento" })[kind] || kind; }
+function formatBytes(value) { const bytes = Number(value) || 0; return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`; }
 
 async function loadIgnoredNumbers() {
   const list = byId("ignored-number-list");

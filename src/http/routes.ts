@@ -17,6 +17,9 @@ import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "../services/c
 import type { ConversationWorkflowState } from "../domain/types.js";
 import type { KnowledgeEmbeddingService } from "../services/knowledge-embedding.service.js";
 import type { WebhookJobService } from "../services/webhook-job.service.js";
+import {
+  DuplicateKnowledgeError, KNOWLEDGE_KINDS, UnsafeKnowledgeError, type KnowledgeManagement,
+} from "../services/knowledge-management.service.js";
 
 interface Dependencies {
   env: Env;
@@ -29,6 +32,7 @@ interface Dependencies {
   embeddings?: KnowledgeEmbeddingService;
   webhookJobs?: WebhookJobService;
   dashboardSessions?: DashboardSessionStore;
+  knowledgeManagement?: KnowledgeManagement;
 }
 
 const PORTAL_ROOT = resolve(process.cwd(), "docs");
@@ -46,7 +50,7 @@ async function sendPortalFile(reply: FastifyReply, file: string, contentType: st
   return reply
     .type(contentType)
     .header("cache-control", "no-store, max-age=0")
-    .header("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+    .header("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
     .send(content);
 }
 
@@ -253,6 +257,129 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     return { configured: false };
   });
 
+  const structuredDataSchema = z.record(z.string().max(60), z.string().trim().max(2_000).nullable());
+  const managedKnowledgeSchema = z.object({
+    kind: z.enum(KNOWLEDGE_KINDS),
+    category: z.string().trim().min(1).max(80).default("Geral"),
+    title: z.string().trim().min(3).max(180),
+    content: z.string().trim().min(10).max(120_000),
+    courseName: z.string().trim().max(180).nullable().default(null),
+    structuredData: structuredDataSchema.default({}),
+    active: z.boolean().default(true),
+    confirmConflict: z.boolean().optional(),
+  });
+  const documentUploadSchema = z.object({
+    filename: z.string().min(1).max(220), mimeType: z.string().min(1).max(150), base64: z.string().min(8).max(5_600_000),
+    title: z.string().trim().min(3).max(180), category: z.string().trim().min(1).max(80).default("Documentos"),
+    courseName: z.string().trim().max(180).nullable().default(null), active: z.boolean().default(true),
+  });
+  const mediaSchema = z.object({
+    entryId: z.string().uuid().nullable().default(null), courseName: z.string().trim().max(180).nullable().default(null),
+    category: z.string().trim().min(1).max(80).default("Imagens"), description: z.string().trim().min(3).max(1_000),
+    keywords: z.array(z.string().trim().min(1).max(50)).max(20).default([]),
+    filename: z.string().min(1).max(220).optional(), mimeType: z.string().min(1).max(100).optional(),
+    base64: z.string().min(8).max(7_100_000).optional(), active: z.boolean().default(true),
+  });
+
+  const knowledgeService = () => {
+    if (!dependencies.knowledgeManagement) throw httpError(503, "Gerenciador de conhecimento indisponível");
+    return dependencies.knowledgeManagement;
+  };
+
+  app.get("/dashboard/knowledge", async (request) => {
+    await requireSession(request);
+    const { search, kind } = z.object({ search: z.string().trim().max(150).default(""), kind: z.string().max(30).default("") }).parse(request.query);
+    return { entries: await knowledgeService().list(search, kind) };
+  });
+
+  app.post("/dashboard/knowledge", { bodyLimit: 1_048_576 }, async (request, reply) => {
+    const session = await requireSession(request);
+    try {
+      const { confirmConflict, ...parsed } = managedKnowledgeSchema.parse(request.body);
+      const entry = await knowledgeService().create({ ...parsed, ...(confirmConflict === undefined ? {} : { confirmConflict }) }, `dashboard:${session.sub}`);
+      return reply.code(201).send({ entry });
+    } catch (error) { return handleKnowledgeError(reply, error); }
+  });
+
+  app.patch<{ Params: { id: string } }>("/dashboard/knowledge/:id", { bodyLimit: 1_048_576 }, async (request, reply) => {
+    const session = await requireSession(request);
+    try {
+      const { confirmConflict, ...parsed } = managedKnowledgeSchema.parse(request.body);
+      const entry = await knowledgeService().update(z.string().uuid().parse(request.params.id), { ...parsed, ...(confirmConflict === undefined ? {} : { confirmConflict }) }, `dashboard:${session.sub}`);
+      return entry ? { entry } : reply.code(404).send({ error: "Conhecimento não encontrado" });
+    } catch (error) { return handleKnowledgeError(reply, error); }
+  });
+
+  app.delete<{ Params: { id: string } }>("/dashboard/knowledge/:id", async (request, reply) => {
+    const session = await requireSession(request);
+    const removed = await knowledgeService().remove(z.string().uuid().parse(request.params.id), `dashboard:${session.sub}`);
+    return removed ? { removed: true } : reply.code(404).send({ error: "Conhecimento não encontrado" });
+  });
+
+  app.get("/dashboard/knowledge/history", async (request) => {
+    await requireSession(request);
+    const { entryId } = z.object({ entryId: z.string().uuid().optional() }).parse(request.query);
+    return { history: await knowledgeService().history(entryId ?? "") };
+  });
+
+  app.post("/dashboard/knowledge/documents", { bodyLimit: 6_500_000 }, async (request, reply) => {
+    const session = await requireSession(request);
+    try {
+      const entry = await knowledgeService().uploadDocument(documentUploadSchema.parse(request.body), `dashboard:${session.sub}`);
+      return reply.code(201).send({ entry });
+    } catch (error) { return handleKnowledgeError(reply, error); }
+  });
+
+  app.get("/dashboard/knowledge/media", async (request) => {
+    await requireSession(request);
+    const { search } = z.object({ search: z.string().trim().max(150).default("") }).parse(request.query);
+    return { media: await knowledgeService().listMedia(search) };
+  });
+
+  app.post("/dashboard/knowledge/media", { bodyLimit: 7_500_000 }, async (request, reply) => {
+    const session = await requireSession(request);
+    try {
+      const media = await knowledgeService().createMedia(mediaSchema.extend({ filename: z.string().min(1), mimeType: z.string().min(1), base64: z.string().min(8) }).parse(request.body), `dashboard:${session.sub}`);
+      return reply.code(201).send({ media });
+    } catch (error) { return handleKnowledgeError(reply, error); }
+  });
+
+  app.patch<{ Params: { id: string } }>("/dashboard/knowledge/media/:id", { bodyLimit: 7_500_000 }, async (request, reply) => {
+    const session = await requireSession(request);
+    try {
+      const { filename, mimeType, base64, ...parsed } = mediaSchema.parse(request.body);
+      const media = await knowledgeService().updateMedia(z.string().uuid().parse(request.params.id), {
+        ...parsed,
+        ...(filename === undefined ? {} : { filename }),
+        ...(mimeType === undefined ? {} : { mimeType }),
+        ...(base64 === undefined ? {} : { base64 }),
+      }, `dashboard:${session.sub}`);
+      return media ? { media } : reply.code(404).send({ error: "Imagem não encontrada" });
+    } catch (error) { return handleKnowledgeError(reply, error); }
+  });
+
+  app.delete<{ Params: { id: string } }>("/dashboard/knowledge/media/:id", async (request, reply) => {
+    const session = await requireSession(request);
+    const removed = await knowledgeService().removeMedia(z.string().uuid().parse(request.params.id), `dashboard:${session.sub}`);
+    return removed ? { removed: true } : reply.code(404).send({ error: "Imagem não encontrada" });
+  });
+
+  app.get<{ Params: { id: string } }>("/dashboard/knowledge/media/:id/file", async (request, reply) => {
+    await requireSession(request);
+    const file = await knowledgeService().getMediaFile(z.string().uuid().parse(request.params.id));
+    if (!file) return reply.code(404).send({ error: "Imagem não encontrada" });
+    return reply.type(file.mimeType).header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.data);
+  });
+
+  app.post("/dashboard/knowledge/test", async (request) => {
+    await requireSession(request);
+    const { question } = z.object({ question: z.string().trim().min(3).max(1_000) }).parse(request.body);
+    const embedding = await openai.embed(question).catch(() => null);
+    const knowledge = await repository.searchKnowledge(question, embedding, 8);
+    const answer = await openai.answerKnowledgeTest(question, knowledge);
+    return { answer, sources: knowledge.map(({ id, title, score }) => ({ id, title, score })) };
+  });
+
   const ignoredPhoneSchema = z.object({
     phoneNumber: z.string().min(10).max(40),
     name: z.string().trim().max(100).nullable().default(null),
@@ -413,4 +540,13 @@ function httpError(statusCode: number, message: string): Error & { statusCode: n
   const error = new Error(message) as Error & { statusCode: number };
   error.statusCode = statusCode;
   return error;
+}
+
+function handleKnowledgeError(reply: FastifyReply, error: unknown) {
+  if (error instanceof DuplicateKnowledgeError) return reply.code(409).send({ error: error.message });
+  if (error instanceof UnsafeKnowledgeError) return reply.code(400).send({ error: error.message });
+  if (error instanceof Error && /arquivo|documento|imagem|conteúdo|campo obrigatório|conhecimento associado/i.test(error.message)) {
+    return reply.code(400).send({ error: error.message });
+  }
+  throw error;
 }

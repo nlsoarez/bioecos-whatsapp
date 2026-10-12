@@ -8,10 +8,28 @@ import { RuntimeSecretStore } from "../src/security/runtime-secret.store.js";
 import { ConversationService } from "../src/services/conversation.service.js";
 import { EvolutionService } from "../src/services/evolution.service.js";
 import { OpenAIResponsesClient } from "../src/services/openai.service.js";
+import type { KnowledgeManagement, KnowledgeMediaFile, KnowledgeMediaInput, ManagedDocumentInput, ManagedKnowledgeInput } from "../src/services/knowledge-management.service.js";
 import type { WebhookJobService } from "../src/services/webhook-job.service.js";
 import { InMemoryRepository } from "./support/in-memory.repository.js";
 
 const directories: string[] = [];
+
+class FakeKnowledgeManagement implements KnowledgeManagement {
+  entries: Array<Record<string, unknown>> = [];
+  media: Array<Record<string, unknown>> = [];
+  async list() { return this.entries; }
+  async create(input: ManagedKnowledgeInput) { const entry = { id: "11111111-1111-4111-8111-111111111111", ...input, status: "active" }; this.entries.push(entry); return entry; }
+  async update(id: string, input: ManagedKnowledgeInput) { const entry = { id, ...input, status: "active" }; this.entries = [entry]; return entry; }
+  async remove(id: string) { const before = this.entries.length; this.entries = this.entries.filter((entry) => entry.id !== id); return before !== this.entries.length; }
+  async history() { return []; }
+  async uploadDocument(input: ManagedDocumentInput) { return { id: "22222222-2222-4222-8222-222222222222", title: input.title, status: "active" }; }
+  async listMedia() { return this.media; }
+  async createMedia(input: KnowledgeMediaInput) { const item = { id: "33333333-3333-4333-8333-333333333333", ...input }; this.media.push(item); return item; }
+  async updateMedia(id: string, input: KnowledgeMediaInput) { return { id, ...input }; }
+  async removeMedia() { return true; }
+  async getMediaFile(): Promise<KnowledgeMediaFile | null> { return { id: "33333333-3333-4333-8333-333333333333", filename: "curso.png", mimeType: "image/png", data: Buffer.from("imagem"), description: "Curso", courseName: null }; }
+  async findRelevantMedia() { return null; }
+}
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -45,17 +63,36 @@ async function setup() {
   const evolution = new EvolutionService(env, request as typeof fetch);
   const openai = new OpenAIResponsesClient(env, request as typeof fetch, async () => secrets.get("OPENAI_API_KEY"));
   const conversations = new ConversationService(repository, openai, evolution);
+  const knowledgeManagement = new FakeKnowledgeManagement();
   const queued: unknown[] = [];
   const webhookJobs = {
     enqueue: async (payload: unknown) => { queued.push(payload); return true; },
     status: async () => ({ pending: 0, processing: 0, failed: 0 }),
     retryFailed: async () => 0,
   } as unknown as WebhookJobService;
-  const app = await buildApp({ env, repository, evolution, conversations, openai, secrets, webhookJobs });
-  return { app, secrets, repository, queued };
+  const app = await buildApp({ env, repository, evolution, conversations, openai, secrets, webhookJobs, knowledgeManagement });
+  return { app, secrets, repository, queued, knowledgeManagement };
 }
 
 describe("rotas do dashboard", () => {
+  it("protege e gerencia a expansão da base por rotas autenticadas", async () => {
+    const { app } = await setup();
+    expect((await app.inject({ method: "GET", url: "/dashboard/knowledge" })).statusCode).toBe(401);
+    const login = await app.inject({ method: "POST", url: "/dashboard/auth/login", payload: { username: "operador", password: "dashboard-password-secret" } });
+    const authorization = `Bearer ${login.json().token as string}`;
+    const created = await app.inject({ method: "POST", url: "/dashboard/knowledge", headers: { authorization }, payload: {
+      kind: "course", category: "Cursos", title: "Fitoterapia complementar", content: "Informação complementar e factual sobre o curso.",
+      courseName: "Fitoterapia", structuredData: { workload: "20 horas" }, active: true,
+    } });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().entry.title).toBe("Fitoterapia complementar");
+    expect((await app.inject({ method: "GET", url: "/dashboard/knowledge", headers: { authorization } })).json().entries).toHaveLength(1);
+    const file = await app.inject({ method: "GET", url: "/dashboard/knowledge/media/33333333-3333-4333-8333-333333333333/file", headers: { authorization } });
+    expect(file.statusCode).toBe(200);
+    expect(file.headers["content-type"]).toContain("image/png");
+    await app.close();
+  });
+
   it("serve o portal no próprio backend sem depender do GitHub Pages", async () => {
     const { app } = await setup();
     const shortPage = await app.inject({ method: "GET", url: "/" });

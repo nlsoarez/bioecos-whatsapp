@@ -69,7 +69,10 @@ try {
     );
   }
 
-  await client.query("UPDATE knowledge_documents SET active = false, updated_at = now() WHERE project_id = $1", [projectId]);
+  await client.query(
+    "UPDATE knowledge_documents SET active = false, updated_at = now() WHERE project_id = $1 AND source LIKE 'config/knowledge/%'",
+    [projectId],
+  );
   for (const source of knowledgeSources) {
     const sourceHash = createHash("sha256").update(source.content).digest("hex");
     const previousDocument = await client.query<{ id: string; content_hash: string }>(

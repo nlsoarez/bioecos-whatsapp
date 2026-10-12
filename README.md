@@ -20,6 +20,7 @@ Backend greenfield para o atendimento da Bioecos com WhatsApp, Débora, base de 
 - painel operacional autenticado para configurar a chave OpenAI, monitorar serviços e gerar o QR Code do WhatsApp;
 - embeddings automáticos após cadastrar a chave e na inicialização;
 - lista persistente de números ignorados, com CRUD no dashboard e bloqueio antes da fila, IA, lead e follow-up;
+- expansão incremental da base da Débora pelo portal, com cursos, conhecimentos, documentos, histórico, detecção de divergências e imagens enviáveis pelo WhatsApp;
 - exportação e exclusão de dados de lead, retenção configurável e backups diários;
 - cenários de homologação do atendimento, da indisponibilidade da IA e do webhook.
 
@@ -97,6 +98,10 @@ O site oficial é configurado por `BIOECOS_SITE_URL` e deve permanecer como `htt
 | `GET` | `/dashboard/conversations/:id` | abre o atendimento pelo link da notificação |
 | `PATCH` | `/dashboard/conversations/:id/workflow` | assume, devolve, conclui ou encerra conversa |
 | `POST` | `/dashboard/notifications/:id/retry` | reenvia notificação que falhou |
+| `GET/POST/PATCH/DELETE` | `/dashboard/knowledge` | gerencia somente os conhecimentos adicionais |
+| `POST` | `/dashboard/knowledge/documents` | valida, extrai e indexa documento adicional |
+| `GET/POST/PATCH/DELETE` | `/dashboard/knowledge/media` | gerencia imagens vinculadas aos conhecimentos |
+| `POST` | `/dashboard/knowledge/test` | testa a recuperação real e mostra as fontes usadas |
 
 As rotas administrativas exigem o cabeçalho `x-admin-key`.
 As rotas de `/dashboard` exigem a sessão autenticada do portal.
@@ -109,7 +114,9 @@ npm run db:seed
 npm run db:embed
 ```
 
-O seed usa chaves únicas e hash de conteúdo. Ele mantém cinco fontes ativas em `config/knowledge/`: quatro institucionais e uma coleção técnica externa delimitada. Embeddings só são recalculados para chunks sem vetor.
+O seed usa chaves únicas e hash de conteúdo. Ele mantém cinco fontes ativas em `config/knowledge/`: quatro institucionais e uma coleção técnica externa delimitada. O seed só desativa fontes desse diretório e não toca nos conteúdos adicionados pelo portal. Embeddings só são recalculados para chunks sem vetor.
+
+Os conteúdos gerenciados ficam em `managed_knowledge_entries`, com versões em `managed_knowledge_versions`, e são espelhados nas tabelas RAG existentes (`knowledge_documents` e `knowledge_chunks`). Enquanto a vetorização não termina, o status permanece `processing` e o conteúdo não participa das respostas. Imagens ficam em `knowledge_media`; todos esses registros são isolados pelo projeto Bioecos e as exclusões administrativas são lógicas.
 
 ## Testes
 

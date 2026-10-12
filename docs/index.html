@@ -83,6 +83,7 @@
         <button class="nav-item" data-section="integrations"><span>03</span>Integrações</button>
         <button class="nav-item" data-section="conversations"><span>04</span>Atendimentos</button>
         <button class="nav-item" data-section="ignored-numbers"><span>05</span>Números ignorados</button>
+        <button class="nav-item" data-section="knowledge"><span>06</span>Base da Débora</button>
       </nav>
       <div class="sidebar-foot">
         <div class="operator"><span class="operator-avatar">O</span><div><strong id="operator-name">Operador</strong><small>Sessão protegida</small></div></div>
@@ -223,10 +224,55 @@
           </article>
         </div>
       </section>
+
+      <section id="section-knowledge" class="dashboard-section" hidden>
+        <div class="section-title"><span class="page-kicker">Expansão incremental</span><h2>Base de Conhecimento da Débora</h2><p>Adicione conteúdos sem alterar a base oficial original. Novos trechos só ficam disponíveis após processamento.</p></div>
+        <div class="knowledge-tabs" role="tablist" aria-label="Gerenciamento da base">
+          <button class="active" data-knowledge-tab="entries" type="button">Conhecimentos</button>
+          <button data-knowledge-tab="courses" type="button">Cursos</button>
+          <button data-knowledge-tab="documents" type="button">Documentos</button>
+          <button data-knowledge-tab="images" type="button">Imagens</button>
+          <button data-knowledge-tab="test" type="button">Teste da Débora</button>
+          <button data-knowledge-tab="history" type="button">Histórico</button>
+        </div>
+
+        <div id="knowledge-tab-entries" class="knowledge-tab">
+          <div class="knowledge-layout">
+            <article class="panel">
+              <div class="panel-heading"><div><span class="panel-kicker">Conteúdo adicional</span><h2 id="knowledge-form-title">Adicionar conhecimento</h2></div></div>
+              <form id="knowledge-form">
+                <input id="knowledge-id" type="hidden">
+                <div class="form-grid"><div><label for="knowledge-kind">Tipo</label><select id="knowledge-kind" required><option value="knowledge">Conhecimento</option><option value="course">Curso</option><option value="qa">Pergunta e resposta</option><option value="institutional">Institucional</option><option value="rule">Regra</option><option value="procedure">Procedimento</option></select></div><div><label for="knowledge-category">Categoria</label><input id="knowledge-category" value="Geral" maxlength="80" required></div></div>
+                <label for="knowledge-title">Título</label><input id="knowledge-title" maxlength="180" required>
+                <label for="knowledge-course">Curso relacionado <span class="optional-label">opcional</span></label><input id="knowledge-course" maxlength="180" placeholder="Ex.: Fitoterapia">
+                <label for="knowledge-content">Conteúdo</label><textarea id="knowledge-content" rows="9" maxlength="120000" required placeholder="Informação factual que a Débora poderá consultar"></textarea>
+                <div id="course-fields" class="course-fields" hidden>
+                  <div class="form-grid"><div><label for="course-modality">Modalidade</label><input id="course-modality"></div><div><label for="course-workload">Carga horária</label><input id="course-workload"></div><div><label for="course-duration">Duração</label><input id="course-duration"></div><div><label for="course-price">Valores</label><input id="course-price"></div><div><label for="course-dates">Datas</label><input id="course-dates"></div><div><label for="course-schedule">Horários</label><input id="course-schedule"></div><div><label for="course-location">Local</label><input id="course-location"></div><div><label for="course-prerequisites">Pré-requisitos</label><input id="course-prerequisites"></div><div><label for="course-availability">Disponibilidade</label><input id="course-availability"></div><div><label for="course-registration-url">Link de inscrição</label><input id="course-registration-url" type="url"></div></div>
+                </div>
+                <label class="checkbox-field"><input id="knowledge-active" type="checkbox" checked><span>Ativar após processamento</span></label>
+                <div class="form-actions"><button id="save-knowledge" class="primary-action" type="submit">Adicionar</button><button id="cancel-knowledge-edit" class="secondary-action" type="button" hidden>Cancelar edição</button></div>
+                <p id="knowledge-form-feedback" class="inline-feedback" role="status"></p>
+              </form>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><span class="panel-kicker">Conteúdos gerenciáveis</span><h2>Adições do portal</h2></div><span id="knowledge-count" class="badge neutral">0</span></div>
+              <div class="form-grid"><div><label for="knowledge-search">Pesquisar</label><input id="knowledge-search" type="search" maxlength="150"></div><div><label for="knowledge-filter-kind">Tipo</label><select id="knowledge-filter-kind"><option value="">Todos</option><option value="course">Cursos</option><option value="knowledge">Conhecimentos</option><option value="qa">Perguntas e respostas</option><option value="institutional">Institucional</option><option value="rule">Regras</option><option value="procedure">Procedimentos</option><option value="document">Documentos</option></select></div></div>
+              <div id="knowledge-list" class="knowledge-list"><p class="empty-state">Nenhum conteúdo adicional.</p></div>
+            </article>
+          </div>
+        </div>
+
+        <div id="knowledge-tab-documents" class="knowledge-tab" hidden><article class="panel compact-panel"><div class="panel-heading"><div><span class="panel-kicker">Indexação segura</span><h2>Enviar documento</h2></div></div><p class="panel-description">Formatos: TXT, MD, CSV, JSON, PDF e DOCX sem macros. Limite de 4 MB e 100 páginas.</p><form id="knowledge-document-form"><label for="document-title">Título</label><input id="document-title" maxlength="180" required><div class="form-grid"><div><label for="document-category">Categoria</label><input id="document-category" value="Documentos" maxlength="80" required></div><div><label for="document-course">Curso relacionado</label><input id="document-course" maxlength="180"></div></div><label for="document-file">Arquivo</label><input id="document-file" type="file" accept=".txt,.md,.csv,.json,.pdf,.docx" required><label class="checkbox-field"><input id="document-active" type="checkbox" checked><span>Ativar após processamento</span></label><button id="upload-document" class="primary-action wide-action" type="submit">Enviar e indexar</button><p id="document-feedback" class="inline-feedback"></p></form></article></div>
+
+        <div id="knowledge-tab-images" class="knowledge-tab" hidden><div class="knowledge-layout"><article class="panel"><div class="panel-heading"><div><span class="panel-kicker">Mídia persistente</span><h2>Adicionar imagem</h2></div></div><form id="knowledge-image-form"><input id="image-id" type="hidden"><label for="image-file">PNG, JPG ou WebP</label><input id="image-file" type="file" accept="image/png,image/jpeg,image/webp"><label for="image-description">Descrição</label><textarea id="image-description" rows="4" maxlength="1000" required></textarea><div class="form-grid"><div><label for="image-course">Curso relacionado</label><input id="image-course" maxlength="180"></div><div><label for="image-category">Categoria</label><input id="image-category" value="Imagens" maxlength="80"></div></div><label for="image-keywords">Palavras-chave</label><input id="image-keywords" maxlength="500" placeholder="fitoterapia, turma, divulgação"><label for="image-entry">Conhecimento associado</label><select id="image-entry"><option value="">Sem vínculo</option></select><label class="checkbox-field"><input id="image-active" type="checkbox" checked><span>Imagem ativa</span></label><div class="form-actions"><button id="save-image" class="primary-action" type="submit">Salvar imagem</button><button id="cancel-image-edit" class="secondary-action" type="button" hidden>Cancelar edição</button></div><p id="image-feedback" class="inline-feedback"></p></form></article><article class="panel"><div class="panel-heading"><div><span class="panel-kicker">Biblioteca visual</span><h2>Imagens cadastradas</h2></div><span id="image-count" class="badge neutral">0</span></div><label for="image-search">Pesquisar</label><input id="image-search" type="search" maxlength="150"><div id="image-list" class="media-grid"><p class="empty-state">Nenhuma imagem cadastrada.</p></div></article></div></div>
+
+        <div id="knowledge-tab-test" class="knowledge-tab" hidden><article class="panel compact-panel"><div class="panel-heading"><div><span class="panel-kicker">Consulta real ao RAG</span><h2>Teste da Débora</h2></div></div><form id="knowledge-test-form"><label for="knowledge-test-question">Pergunta</label><textarea id="knowledge-test-question" rows="4" maxlength="1000" required></textarea><button id="run-knowledge-test" class="primary-action wide-action" type="submit">Perguntar à Débora</button></form><div id="knowledge-test-result" class="test-result"><p class="empty-state">A resposta e as fontes recuperadas aparecerão aqui.</p></div></article></div>
+        <div id="knowledge-tab-history" class="knowledge-tab" hidden><article class="panel compact-panel"><div class="panel-heading"><div><span class="panel-kicker">Auditoria</span><h2>Histórico de atualizações</h2></div></div><div id="knowledge-history" class="knowledge-list"><p class="empty-state">Carregando histórico...</p></div></article></div>
+      </section>
     </main>
   </div>
 
   <script src="assets/config.js"></script>
-  <script src="assets/app.js?v=20261011-qr-refresh" defer></script>
+  <script src="assets/app.js?v=20261012-knowledge-manager" defer></script>
 </body>
 </html>

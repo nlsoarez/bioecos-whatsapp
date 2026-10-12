@@ -29,4 +29,15 @@ describe("configuração segura de desenvolvimento", () => {
     expect(repository).toContain("p.id = i.project_id");
     expect(repository).toContain("p.slug = 'bioecos'");
   });
+
+  it("expande a base por migração aditiva e impede o seed de desativar conteúdos do portal", async () => {
+    const migration = await readFile("src/db/migrations/008_managed_knowledge.sql", "utf8");
+    const seed = await readFile("src/db/seed.ts", "utf8");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS managed_knowledge_entries");
+    expect(migration).toContain("document_id uuid NOT NULL UNIQUE REFERENCES knowledge_documents");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS knowledge_media");
+    expect(migration).not.toMatch(/\b(DROP|TRUNCATE)\b/i);
+    expect(seed).toContain("source LIKE 'config/knowledge/%'");
+    expect(seed).not.toMatch(/UPDATE knowledge_documents SET active = false WHERE project_id = \$1`/);
+  });
 });

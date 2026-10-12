@@ -13,6 +13,7 @@ import type { CoordinatorNotifier } from "./services/coordinator-notification.se
 import type { KnowledgeEmbeddingService } from "./services/knowledge-embedding.service.js";
 import type { WebhookJobService } from "./services/webhook-job.service.js";
 import type { DashboardSessionStore } from "./security/dashboard-session.store.js";
+import type { KnowledgeManagement } from "./services/knowledge-management.service.js";
 import { ZodError } from "zod";
 
 export interface AppDependencies {
@@ -26,6 +27,7 @@ export interface AppDependencies {
   embeddings?: KnowledgeEmbeddingService;
   webhookJobs?: WebhookJobService;
   dashboardSessions?: DashboardSessionStore;
+  knowledgeManagement?: KnowledgeManagement;
 }
 
 export async function buildApp(dependencies: AppDependencies) {
