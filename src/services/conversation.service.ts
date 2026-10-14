@@ -8,7 +8,7 @@ import { NoopCoordinatorNotifier, type CoordinatorNotifier } from "./coordinator
 import { ToolService } from "./tool.service.js";
 import type { KnowledgeManagement } from "./knowledge-management.service.js";
 
-const HANDOFF_ACCEPTED_MESSAGE = "Registrei sua solicitação e a notificação foi aceita pelo canal WhatsApp da equipe. Isso confirma o envio, não a leitura. A equipe continuará o atendimento por aqui.";
+const HANDOFF_ACCEPTED_MESSAGE = "Claro! Já passei seu pedido para a coordenação. É só aguardar o retorno por aqui, nesta conversa. 😊";
 const HANDOFF_PENDING_MESSAGE = "Registrei sua solicitação, mas o envio da notificação à equipe ainda não foi confirmado. O sistema continuará tentando e o contexto desta conversa foi preservado.";
 const HANDOFF_FAILED_MESSAGE = "Registrei sua solicitação, mas não foi possível confirmar o aviso à equipe neste momento. O contexto da conversa foi preservado para acompanhamento.";
 const NOT_INTERESTED_MESSAGE = "Certo. Registrei que você não tem interesse e encerrei os acompanhamentos automáticos.";
