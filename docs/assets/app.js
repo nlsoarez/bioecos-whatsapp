@@ -394,6 +394,19 @@ async function loadLeadDetail(contactId) {
   }
 }
 
+async function loadConversationDetail(conversationId) {
+  showSection('leads');
+  closeHumanConversation();
+  const detail=byId('lead-detail');
+  detail.hidden=false;
+  detail.replaceChildren(emptyState('Carregando conversa...'));
+  try {
+    const {lead}=await api(`/dashboard/conversations/${encodeURIComponent(conversationId)}`);
+    renderLeadDetail(lead);
+    detail.scrollIntoView({behavior:'smooth',block:'start'});
+  } catch(error) {detail.replaceChildren(emptyState(`Falha ao abrir a conversa: ${error.message}`));}
+}
+
 function renderLeadDetail(lead) {
   closeHumanConversation();
   const detail = byId("lead-detail");
@@ -704,7 +717,13 @@ function renderConversations(container, conversations) {
     const status = document.createElement("span");
     status.className = conversation.automation_paused ? "conversation-paused" : "conversation-time";
     status.textContent = conversation.automation_paused ? "Em atendimento humano" : formatTime(conversation.last_interaction_at);
-    row.append(avatar, identity, status);
+    const actions=document.createElement('div'); actions.className='conversation-actions';
+    const open=document.createElement('button'); open.type='button'; open.className='secondary-action';
+    open.textContent='Abrir conversa';
+    open.setAttribute('aria-label',`Abrir conversa de ${conversation.name || 'contato sem nome'}`);
+    open.addEventListener('click',()=>void loadConversationDetail(conversation.id));
+    actions.append(status,open);
+    row.append(avatar, identity, actions);
     container.append(row);
   });
 }
