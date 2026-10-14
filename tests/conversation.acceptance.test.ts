@@ -141,7 +141,8 @@ describe("homologação Bioecos", () => {
     expect(s.repository.context.tags).toContain("orcamento");
     expect(s.repository.context.pipelineStage).toBe("Aguardando coordenador");
     expect(s.repository.context.workflowState).toBe("awaiting_coordinator");
-    expect(result.response).toContain("notificação foi aceita");
+    expect(result.response).toContain("coordenação");
+    expect(s.repository.notifications[0]?.status).toBe('accepted');
   });
 
   it("8. pedido de consultor realiza handoff e pausa IA", async () => {
@@ -159,7 +160,8 @@ describe("homologação Bioecos", () => {
   ])("8b. reconhece solicitação humana indireta: %s", async (content) => {
     const s = setup();
     const result = await s.service.handle(inbound(content));
-    expect(result.response).toContain("notificação foi aceita");
+    expect(result.response).toContain("coordenação");
+    expect(s.repository.notifications[0]?.status).toBe('accepted');
     expect(s.repository.context.automationPaused).toBe(true);
     expect(s.repository.notifications).toHaveLength(1);
   });
