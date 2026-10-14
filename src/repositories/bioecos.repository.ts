@@ -26,6 +26,7 @@ export type ContactUpdate = Partial<{
 }>;
 
 export interface BioecosRepository {
+  sendAuthorized(context: ContactContext, content: string, send: () => Promise<import('../services/evolution.service.js').SendResult>, notificationId?: string): Promise<boolean>;
   health(): Promise<boolean>;
   isPhoneIgnored(phone: string): Promise<boolean>;
   listIgnoredPhoneNumbers(search?: string): Promise<IgnoredPhoneNumber[]>;
@@ -59,7 +60,7 @@ export interface BioecosRepository {
   markCoordinatorNotificationRetry(id: string, error: string, nextAttemptAt: Date | null, recipientPhone?: string | null): Promise<void>;
   requeueCoordinatorNotification(id: string): Promise<boolean>;
   listCoordinatorNotifications(status: string, limit: number): Promise<CoordinatorNotificationRecord[]>;
-  setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string): Promise<void>;
+  setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string, actor?: string): Promise<void>;
   getLeads(filter: string): Promise<unknown[]>;
   saveOutbound(conversationId: string, externalMessageId: string, content: string, metadata: unknown): Promise<void>;
   setAutomationPaused(conversationId: string, paused: boolean, actor: string): Promise<void>;

@@ -405,7 +405,7 @@ function renderLeadDetail(lead) {
   meta.textContent = `${lead.course || lead.interest || "Interesse em identificação"} · ${workflowLabel(lead.workflow_state)} · responsável: ${lead.current_owner === "ai" ? "IA" : "Coordenador"}`;
   const summary = document.createElement("p"); summary.className = "lead-summary"; summary.textContent = lead.summary || "Resumo ainda não gerado.";
   const actions = document.createElement("div"); actions.className = "lead-actions";
-  [["coordinator_attending", "Assumir atendimento"], ["ai_attending", "Devolver para IA"], ["enrollment_completed", "Matrícula concluída"], ["not_interested", "Sem interesse"], ["conversation_finished", "Finalizar conversa"]].forEach(([state, label]) => {
+  [["coordinator_attending", "Assumir atendimento"], ["ai_attending", "Devolver atendimento para Débora"], ["enrollment_completed", "Matrícula concluída"], ["not_interested", "Sem interesse"], ["conversation_finished", "Finalizar conversa"]].forEach(([state, label]) => {
     const button = document.createElement("button"); button.type = "button"; button.className = state === "enrollment_completed" ? "primary-action" : "secondary-action"; button.textContent = label;
     button.addEventListener("click", () => changeWorkflow(lead.conversation_id, state, label)); actions.append(button);
   });
@@ -734,6 +734,10 @@ async function loadNotificationHistory() {
       const meta = document.createElement("small");
       meta.textContent = `${notification.recipientMasked || "Coordenador não configurado"} · ${notification.attempts || 0} tentativa(s)${notification.lastError ? ` · ${notification.lastError}` : ""}`;
       main.append(heading, message, meta); row.append(main);
+      if (notification.customerAckError) {
+        const warning = document.createElement('p'); warning.textContent = notification.customerAckError;
+        main.append(warning);
+      }
       if (notification.status === "failed") {
         const retry = document.createElement("button"); retry.type = "button"; retry.className = "secondary-action"; retry.textContent = "Tentar novamente";
         retry.addEventListener("click", async () => { retry.disabled = true; try { await api(`/dashboard/notifications/${encodeURIComponent(notification.id)}/retry`, { method: "POST" }); await loadNotificationHistory(); await loadNotificationFailures(); } catch (error) { window.alert(error.message); } finally { retry.disabled = false; } });

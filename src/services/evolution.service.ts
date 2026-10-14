@@ -80,7 +80,8 @@ export class EvolutionService implements MessageSender {
         const raw = (await response.json().catch(() => ({}))) as Record<string, unknown>;
         if (response.ok) {
           const key = raw.key as Record<string, unknown> | undefined;
-          return { externalMessageId: String(key?.id ?? `evolution:${Date.now()}`), raw };
+          if (typeof key?.id !== 'string' || !key.id) throw new EvolutionHttpError(502, false);
+          return { externalMessageId: key.id, raw };
         }
         if (response.status < 500 || attempt === this.env.EVOLUTION_MAX_RETRIES) {
           this.automatedOutbounds.delete(fingerprint);
@@ -122,7 +123,8 @@ export class EvolutionService implements MessageSender {
         const raw = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (response.ok) {
           const key = raw.key as Record<string, unknown> | undefined;
-          return { externalMessageId: String(key?.id ?? `evolution-media:${Date.now()}`), raw };
+          if (typeof key?.id !== 'string' || !key.id) throw new EvolutionHttpError(502, false);
+          return { externalMessageId: key.id, raw };
         }
         if (response.status < 500 || attempt === this.env.EVOLUTION_MAX_RETRIES) throw new EvolutionHttpError(response.status, response.status >= 500);
         lastError = new Error(`Evolution API respondeu ${response.status}`);

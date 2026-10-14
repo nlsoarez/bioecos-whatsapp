@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { DEBORA_SYSTEM_PROMPT } from "../config/bioecos.js";
 import type { ChatMessage, ContactContext, InboundMessage, KnowledgeHit, LeadAssessment } from "../domain/types.js";
 import type { BioecosRepository } from "../repositories/bioecos.repository.js";
@@ -39,18 +38,27 @@ export class ConversationService {
   ) {}
 
   async handle(message: InboundMessage): Promise<{ status: "ignored" | "duplicate" | "paused" | "responded"; response?: string }> {
+    try { return await this.process(message); }
+    catch (error) { if (error instanceof AutomationSuppressed) return { status: 'paused' }; throw error; }
+  }
+
+  private async process(message: InboundMessage): Promise<{ status: "ignored" | "duplicate" | "paused" | "responded"; response?: string }> {
     if (await this.repository.isPhoneIgnored(message.phone)) return { status: "ignored" };
     const ingestion = await this.repository.ingestInbound(message);
     if (ingestion.duplicate) return { status: "duplicate" };
+    const blocked = ingestion.context.automationPaused || ingestion.context.currentOwner !== 'ai'
+      || ingestion.context.workflowState !== 'ai_attending'
+      || (ingestion.context.automationResumedAt && message.timestamp <= ingestion.context.automationResumedAt);
 
     if (FOLLOWUP_OPT_OUT_PATTERN.test(message.content)) {
       await this.repository.optOutMonthlyFollowup(ingestion.context);
+      if (blocked) return { status: 'paused' };
       const response = "Certo. O acompanhamento automático foi cancelado e você não receberá novos lembretes.";
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
+      await this.sendAndSave(ingestion.context, response);
       return { status: "responded", response };
     }
 
-    if (ingestion.context.automationPaused || ingestion.context.currentOwner !== "ai") return { status: "paused" };
+    if (blocked) return { status: 'paused' };
 
     const recentMessages = await this.repository.getRecentMessages(ingestion.context.conversationId, 24);
     const wasFollowupReply = ingestion.context.followupEnabled;
@@ -69,10 +77,10 @@ export class ConversationService {
     await this.repository.recordLeadAssessment(ingestion.context, assessment);
 
     if (assessment.notInterested) {
+      await this.sendAndSave(ingestion.context, NOT_INTERESTED_MESSAGE);
       await this.repository.setConversationWorkflow(
         ingestion.context.conversationId, "not_interested", "ai", "Contato declarou não ter interesse",
       );
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, NOT_INTERESTED_MESSAGE);
       return { status: "responded", response: NOT_INTERESTED_MESSAGE };
     }
 
@@ -91,22 +99,22 @@ export class ConversationService {
       const media = await this.knowledgeManagement.findRelevantMedia(`${selectedCourse ?? ""} ${message.content}`);
       if (media) {
         const caption = media.description || `Imagem de ${media.courseName ?? "um conteúdo da Bioecos"}`;
-        const sent = await this.sender.sendMedia(message.phone, { mimeType: media.mimeType, filename: media.filename, data: media.data, caption });
-        await this.repository.saveOutbound(ingestion.context.conversationId,
-          sent.externalMessageId || `outbound:${randomUUID()}`, `[Imagem] ${caption}`, sent.raw);
+        const sent = await this.repository.sendAuthorized(ingestion.context, `[Imagem] ${caption}`,
+          () => this.sender.sendMedia!(message.phone, { mimeType: media.mimeType, filename: media.filename, data: media.data, caption }));
+        if (!sent) throw new AutomationSuppressed();
         return { status: "responded", response: caption };
       }
     }
     const experienceReply = respondToExperienceLevel(message.content, recentMessages, selectedCourse);
     if (experienceReply) {
       await this.repository.addNote(ingestion.context, `Experiência informada: ${experienceReply.level}`);
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, experienceReply.response);
+      await this.sendAndSave(ingestion.context, experienceReply.response);
       return { status: "responded", response: experienceReply.response };
     }
 
     const ambiguousReply = clarifyAmbiguousAffirmation(message.content, recentMessages, selectedCourse);
     if (ambiguousReply) {
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, ambiguousReply);
+      await this.sendAndSave(ingestion.context, ambiguousReply);
       return { status: "responded", response: ambiguousReply };
     }
 
@@ -114,7 +122,7 @@ export class ConversationService {
     if (objective && selectedCourse) {
       await this.repository.updateContact(ingestion.context, { objective });
       const response = `Entendi: seu objetivo com ${selectedCourse} é ${objective}. Registrei essa informação. Você quer esclarecer alguma dúvida específica sobre o curso ou deseja avançar para a inscrição?`;
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
+      await this.sendAndSave(ingestion.context, response);
       if (!wasFollowupReply && assessment.temperature === "hot") await this.repository.scheduleFollowups(ingestion.context);
       return { status: "responded", response };
     }
@@ -152,12 +160,13 @@ export class ConversationService {
         await this.repository.recordLeadAssessment(ingestion.context, guardedAssessment);
         return this.handoffAndRespond(ingestion.context, guardedAssessment, recentMessages, message, guardedAssessment.handoffReason);
       }
-    } catch {
-      await this.sendAndSave(ingestion.context.conversationId, message.phone, TEMPORARY_ERROR_MESSAGE);
+    } catch (error) {
+      if (error instanceof AutomationSuppressed) throw error;
+      await this.sendAndSave(ingestion.context, TEMPORARY_ERROR_MESSAGE);
       return { status: "responded", response: TEMPORARY_ERROR_MESSAGE };
     }
 
-    await this.sendAndSave(ingestion.context.conversationId, message.phone, response);
+    await this.sendAndSave(ingestion.context, response);
     if (!wasFollowupReply && assessment.temperature === "hot" && assessment.course) {
       await this.repository.scheduleFollowups(ingestion.context);
     }
@@ -177,18 +186,20 @@ export class ConversationService {
     const notification = await this.notifier.notify(context, {
       assessment, summary, lastMessage: message.content, reason,
       sourceMessageId: message.externalMessageId, requestedAt: message.timestamp,
-    }).catch(() => ({ id: "unavailable", status: "failed" as const, providerMessageId: null }));
+    });
     const response = notification.status === "accepted" ? HANDOFF_ACCEPTED_MESSAGE
       : notification.status === "pending" ? HANDOFF_PENDING_MESSAGE : HANDOFF_FAILED_MESSAGE;
-    await this.sendAndSave(context.conversationId, message.phone, response);
+    await this.sendAndSave(context, response, notification.id);
     return { status: "responded", response };
   }
 
-  private async sendAndSave(conversationId: string, phone: string, content: string): Promise<void> {
-    const sent = await this.sender.sendText(phone, content);
-    await this.repository.saveOutbound(conversationId, sent.externalMessageId || `outbound:${randomUUID()}`, content, sent.raw);
+  private async sendAndSave(context: ContactContext, content: string, notificationId?: string): Promise<void> {
+    const sent = await this.repository.sendAuthorized(context, content, () => this.sender.sendText(context.phone, content), notificationId);
+    if (!sent) throw new AutomationSuppressed();
   }
 }
+
+class AutomationSuppressed extends Error {}
 
 function buildSummary(context: ContactContext, assessment: LeadAssessment, messages: ChatMessage[], current: string): string {
   const relevant = messages.filter((item) => item.direction === "inbound").map((item) => item.content).slice(-5);

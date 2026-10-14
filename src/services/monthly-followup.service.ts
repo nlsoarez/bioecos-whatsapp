@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { BioecosRepository } from "../repositories/bioecos.repository.js";
 import type { MessageSender } from "./evolution.service.js";
 
@@ -34,7 +33,10 @@ export class MonthlyFollowupService {
         const content = followupMessage(candidate.step, greeting, candidate.course);
         let sent;
         try {
-          sent = await this.sender.sendText(candidate.phone, content);
+          const context = await this.repository.getContext(candidate.conversationId);
+          context.ownershipVersion = candidate.ownershipVersion ?? 0;
+          sent = await this.repository.sendAuthorized(context, content, () => this.sender.sendText(candidate.phone, content));
+          if (!sent) continue;
         } catch (error) {
           failed += 1;
           await this.repository.markMonthlyFollowupFailed(candidate, error instanceof Error ? error.message : String(error));
@@ -42,12 +44,6 @@ export class MonthlyFollowupService {
         }
         try {
           await this.repository.markMonthlyFollowupSent(candidate, content);
-          await this.repository.saveOutbound(
-            candidate.conversationId,
-            sent.externalMessageId || `followup:${randomUUID()}`,
-            content,
-            sent.raw,
-          );
           sentCount += 1;
         } catch {
           // A mensagem já foi entregue ao WhatsApp. Não reagendamos para evitar duplicidade.

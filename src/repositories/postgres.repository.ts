@@ -138,6 +138,7 @@ export class PostgresRepository implements BioecosRepository {
           [projectId, this.pii.encrypt(message.phone), phoneHash, this.pii.encryptNullable(message.pushName)],
         );
       const contactId = contactResult.rows[0]!.id;
+      await client.query("SELECT id FROM conversations WHERE contact_id = $1 AND status = 'open' FOR UPDATE", [contactId]);
 
       const newStage = await client.query<{ id: string }>(
         "SELECT id FROM pipeline_stages WHERE project_id = $1 AND name = 'Novo contato'",
@@ -357,8 +358,10 @@ export class PostgresRepository implements BioecosRepository {
        followup_next_at = now() + interval '30 days', followup_sequence_id = gen_random_uuid(),
        followup_last_error = null, followup_failure_attempts = 0, followup_locked_at = null,
        followup_lock_token = null, updated_at = now()
-       WHERE id = $1 AND temperature = 'hot' AND followup_opt_out = false AND enrollment_status = 'pending'`,
-      [context.leadId],
+       WHERE id = $1 AND temperature = 'hot' AND followup_opt_out = false AND enrollment_status = 'pending'
+       AND EXISTS (SELECT 1 FROM conversations WHERE id = $2 AND current_owner = 'ai'
+         AND workflow_state = 'ai_attending' AND automation_paused = false AND ownership_version = $3)`,
+      [context.leadId, context.conversationId, context.ownershipVersion ?? 0],
     );
     await this.auditForContext(context, "automation", "followup.scheduled", { days: [30, 60, 90], eligibility: "hot" });
   }
@@ -414,12 +417,12 @@ export class PostgresRepository implements BioecosRepository {
     const lockToken = randomUUID();
     const result = await this.pool.query<{
       lead_id: string; contact_id: string; conversation_id: string; phone: string;
-      name: string | null; course: string; attempts: number; sequence_id: string; lock_token: string;
+      name: string | null; course: string; attempts: number; sequence_id: string; lock_token: string; ownership_version: number;
     }>(
       `UPDATE leads claimed SET followup_locked_at = now(), followup_lock_token = $2
        FROM (
        SELECT l.id AS lead_id, c.id AS contact_id, cv.id AS conversation_id, c.phone, c.name,
-        l.course, l.followup_attempts AS attempts, l.followup_sequence_id AS sequence_id
+        l.course, l.followup_attempts AS attempts, l.followup_sequence_id AS sequence_id, cv.ownership_version
        FROM leads l JOIN contacts c ON c.id = l.contact_id
        JOIN projects p ON p.id = c.project_id AND p.slug = 'bioecos'
        JOIN automation_settings s ON s.project_id = p.id
@@ -442,7 +445,7 @@ export class PostgresRepository implements BioecosRepository {
        ORDER BY l.followup_next_at ASC FOR UPDATE OF l SKIP LOCKED LIMIT $1
        ) due WHERE claimed.id = due.lead_id
        RETURNING due.lead_id, due.contact_id, due.conversation_id, due.phone, due.name,
-         due.course, due.attempts, due.sequence_id, claimed.followup_lock_token AS lock_token`,
+         due.course, due.attempts, due.sequence_id, due.ownership_version, claimed.followup_lock_token AS lock_token`,
       [Math.max(1, Math.min(limit, 100)), lockToken],
     );
     return result.rows.map((row) => ({
@@ -450,6 +453,7 @@ export class PostgresRepository implements BioecosRepository {
       phone: this.pii.decrypt(row.phone), name: this.pii.decryptNullable(row.name), course: this.pii.decrypt(row.course), attempts: row.attempts,
       step: Math.min(3, row.attempts + 1) as 1 | 2 | 3, sequenceId: row.sequence_id,
       lockToken: row.lock_token,
+      ownershipVersion: row.ownership_version,
     }));
   }
 
@@ -459,8 +463,10 @@ export class PostgresRepository implements BioecosRepository {
         followup_next_at = CASE WHEN followup_attempts + 1 >= 3 THEN null ELSE now() + interval '30 days' END,
         followup_enabled = followup_attempts + 1 < 3, followup_last_error = null,
         followup_failure_attempts = 0, followup_locked_at = null, followup_lock_token = null, updated_at = now()
-       WHERE id = $1 AND ($2::uuid IS NULL OR followup_lock_token = $2::uuid)`,
-      [candidate.leadId, candidate.lockToken ?? null],
+       WHERE id = $1 AND ($2::uuid IS NULL OR followup_lock_token = $2::uuid)
+       AND EXISTS (SELECT 1 FROM conversations WHERE id = $3 AND current_owner = 'ai' AND workflow_state = 'ai_attending'
+         AND automation_paused = false AND ownership_version = $4)`,
+      [candidate.leadId, candidate.lockToken ?? null, candidate.conversationId, candidate.ownershipVersion ?? 0],
     );
     await this.pool.query(
       `INSERT INTO followup_events(lead_id, conversation_id, sequence_id, step, status, content)
@@ -478,8 +484,10 @@ export class PostgresRepository implements BioecosRepository {
        followup_last_error = $2,
        followup_next_at = CASE WHEN followup_failure_attempts + 1 >= 3 THEN null ELSE now() + interval '1 day' END,
        followup_locked_at = null, followup_lock_token = null, updated_at = now()
-       WHERE id = $1 AND ($3::uuid IS NULL OR followup_lock_token = $3::uuid)`,
-      [candidate.leadId, this.pii.encrypt(error.slice(0, 500)), candidate.lockToken ?? null],
+       WHERE id = $1 AND ($3::uuid IS NULL OR followup_lock_token = $3::uuid)
+       AND EXISTS (SELECT 1 FROM conversations WHERE id = $4 AND current_owner = 'ai' AND workflow_state = 'ai_attending'
+         AND automation_paused = false AND ownership_version = $5)`,
+      [candidate.leadId, this.pii.encrypt(error.slice(0, 500)), candidate.lockToken ?? null, candidate.conversationId, candidate.ownershipVersion ?? 0],
     );
     await this.pool.query(
       `INSERT INTO followup_events(lead_id, conversation_id, sequence_id, step, status, error)
@@ -509,6 +517,7 @@ export class PostgresRepository implements BioecosRepository {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const ownership = await client.query('SELECT * FROM conversations WHERE id = $1 FOR UPDATE', [context.conversationId]);
       const duplicate = await client.query<{ id: string }>(
         "SELECT id FROM coordinator_notifications WHERE conversation_id = $1 AND source_message_id = $2 FOR UPDATE",
         [context.conversationId, notification.sourceMessageId],
@@ -517,10 +526,13 @@ export class PostgresRepository implements BioecosRepository {
         await client.query("COMMIT");
         return duplicate.rows[0].id;
       }
+      const current = ownership.rows[0];
+      if (!current || current.automation_paused || current.current_owner !== 'ai' || current.workflow_state !== 'ai_attending'
+        || current.ownership_version !== (context.ownershipVersion ?? 0)) throw new Error('Responsabilidade alterada durante processamento');
       const existing = await client.query<{ notes: string | null }>("SELECT notes FROM leads WHERE id = $1 FOR UPDATE", [context.leadId]);
       const handoffNote = [this.pii.decryptNullable(existing.rows[0]?.notes) ?? "", `Handoff: ${reason}`].filter(Boolean).join("\n");
       await client.query(
-        `UPDATE conversations SET automation_paused = true, summary = $2, workflow_state = 'awaiting_coordinator',
+        `UPDATE conversations SET automation_paused = true, ownership_version = ownership_version + 1, summary = $2, workflow_state = 'awaiting_coordinator',
          current_owner = 'coordinator', handoff_reason = $3, coordinator_notification_status = 'pending'
          WHERE id = $1`,
         [context.conversationId, this.pii.encrypt(summary), this.pii.encrypt(reason)],
@@ -632,7 +644,8 @@ export class PostgresRepository implements BioecosRepository {
     return result.rows.map((row) => this.mapCoordinatorNotification(row));
   }
 
-  async setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string): Promise<void> {
+  async setConversationWorkflow(conversationId: string, state: ConversationWorkflowState, owner: string, reason: string, actor?: string): Promise<void> {
+    if (state === 'ai_attending' && !actor?.startsWith('dashboard:')) throw new Error('Devolução exige operador autenticado no portal');
     const context = await this.getContext(conversationId);
     const paused = state !== "ai_attending";
     const stage: PipelineStage = ({
@@ -644,7 +657,9 @@ export class PostgresRepository implements BioecosRepository {
     try {
       await client.query("BEGIN");
       await client.query(
-        "UPDATE conversations SET workflow_state = $2, current_owner = $3, automation_paused = $4 WHERE id = $1",
+        `UPDATE conversations SET workflow_state = $2, current_owner = $3, automation_paused = $4,
+         ownership_version = ownership_version + 1,
+         automation_resumed_at = CASE WHEN $2 = 'ai_attending' THEN now() ELSE automation_resumed_at END WHERE id = $1`,
         [conversationId, state, owner, paused],
       );
       await client.query(
@@ -659,8 +674,10 @@ export class PostgresRepository implements BioecosRepository {
          WHERE l.id = $1 AND c.id = l.contact_id AND ps.name = $2`,
         [context.leadId, stage, paused, state, this.pii.encrypt(reason)],
       );
+      const project = await client.query<{project_id: string}>('SELECT project_id FROM contacts WHERE id = $1', [context.contactId]);
+      await this.audit(client, project.rows[0]!.project_id, context.contactId, conversationId,
+        actor ?? owner, state === 'ai_attending' ? 'conversation.returned_to_automation' : 'conversation.workflow_changed', { state, owner, reason: 'recorded' });
       await client.query("COMMIT");
-      await this.auditForContext(context, owner, "conversation.workflow_changed", { state, owner, reason: "recorded" });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -701,8 +718,42 @@ export class PostgresRepository implements BioecosRepository {
     );
   }
 
+  async sendAuthorized(context: ContactContext, content: string,
+    send: () => Promise<import('../services/evolution.service.js').SendResult>, notificationId?: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query('SELECT * FROM conversations WHERE id = $1 FOR UPDATE', [context.conversationId]);
+      const row = result.rows[0];
+      if (!row || await this.isPhoneIgnored(context.phone)) { await client.query('ROLLBACK'); return false; }
+      if (notificationId) {
+        const ack = await client.query(`SELECT id FROM coordinator_notifications WHERE id = $1 AND conversation_id = $2
+          AND customer_ack_at IS NULL FOR UPDATE`, [notificationId, context.conversationId]);
+        if (!ack.rowCount || row.current_owner !== 'coordinator' || row.workflow_state !== 'awaiting_coordinator'
+          || row.ownership_version !== (context.ownershipVersion ?? 0) + 1) { await client.query('ROLLBACK'); return false; }
+      } else if (row.automation_paused || row.current_owner !== 'ai' || row.workflow_state !== 'ai_attending'
+        || row.ownership_version !== (context.ownershipVersion ?? 0)) { await client.query('ROLLBACK'); return false; }
+      const sent = await send();
+      if (!sent.externalMessageId) throw new Error('Evolution não confirmou identificador da mensagem');
+      await client.query(`INSERT INTO messages(conversation_id, external_message_id, direction, content, timestamp, metadata)
+        VALUES ($1, $2, 'outbound', $3, now(), '{"source":"automation"}'::jsonb)
+        ON CONFLICT(external_message_id) DO NOTHING`, [context.conversationId, sent.externalMessageId, this.pii.encrypt(content)]);
+      if (notificationId) await client.query(`UPDATE coordinator_notifications SET customer_ack_at = now(),
+        customer_ack_error = null, customer_ack_provider_id = $2 WHERE id = $1`, [notificationId, sent.externalMessageId]);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      if (notificationId) await client.query(`UPDATE coordinator_notifications
+        SET customer_ack_error = 'Confirmação ao cliente não confirmada pelo provedor' WHERE id = $1`, [notificationId]);
+      throw error;
+    }
+    finally { client.release(); }
+  }
+
   async setAutomationPaused(conversationId: string, paused: boolean, actor: string): Promise<void> {
-    await this.pool.query("UPDATE conversations SET automation_paused = $2 WHERE id = $1", [conversationId, paused]);
+    if (!paused) throw new Error('Use a devolução explícita no portal');
+    await this.pool.query("UPDATE conversations SET automation_paused = true, ownership_version = ownership_version + 1 WHERE id = $1", [conversationId]);
     const context = await this.getContext(conversationId);
     await this.auditForContext(context, actor, paused ? "automation.paused" : "automation.resumed", {});
   }
@@ -797,6 +848,8 @@ export class PostgresRepository implements BioecosRepository {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      const automated = await client.query('SELECT id FROM coordinator_notifications WHERE provider_message_id = $1 LIMIT 1', [message.externalMessageId]);
+      if (automated.rowCount) { await client.query('ROLLBACK'); return false; }
       const target = await client.query<{ conversation_id: string; contact_id: string; project_id: string }>(
         `SELECT cv.id AS conversation_id, c.id AS contact_id, c.project_id
          FROM contacts c JOIN conversations cv ON cv.contact_id = c.id AND cv.status = 'open'
@@ -806,6 +859,7 @@ export class PostgresRepository implements BioecosRepository {
       );
       const row = target.rows[0];
       if (!row) { await client.query("ROLLBACK"); return false; }
+      await client.query('SELECT id FROM conversations WHERE id = $1 FOR UPDATE', [row.conversation_id]);
       const inserted = await client.query(
         `INSERT INTO messages(conversation_id, external_message_id, direction, content, timestamp, metadata)
          VALUES ($1, $2, 'outbound', $3, $4, '{"source":"coordinator_whatsapp"}'::jsonb)
@@ -815,7 +869,7 @@ export class PostgresRepository implements BioecosRepository {
       if (inserted.rowCount === 0) { await client.query("COMMIT"); return false; }
       await client.query(
         `UPDATE conversations SET automation_paused = true, workflow_state = 'coordinator_attending',
-         current_owner = 'coordinator', last_interaction_at = greatest(last_interaction_at, $2)
+         current_owner = 'coordinator', ownership_version = ownership_version + 1, last_interaction_at = greatest(last_interaction_at, $2)
          WHERE id = $1`,
         [row.conversation_id, message.timestamp],
       );
@@ -873,6 +927,7 @@ export class PostgresRepository implements BioecosRepository {
       phone: string; name: string | null; email: string | null; city: string | null; company_name: string | null;
       area: string | null; interest: string | null; service: string | null; course: string | null; objective: string | null;
       pipeline_stage: PipelineStage; automation_paused: boolean; tags: AllowedTag[];
+      ownership_version: number; automation_resumed_at: Date | null;
       qualification_step: QualificationStep | null; temperature: LeadTemperature;
       followup_enabled: boolean; followup_opt_out: boolean; followup_next_at: Date | null; followup_attempts: number;
       workflow_state: ContactContext["workflowState"]; current_owner: string; handoff_reason: string | null;
@@ -883,7 +938,7 @@ export class PostgresRepository implements BioecosRepository {
         l.qualification_step, l.temperature, l.followup_enabled, l.followup_opt_out, l.followup_next_at,
         l.followup_attempts, l.main_questions, l.objections, l.enrollment_status,
         ps.name AS pipeline_stage, cv.automation_paused, cv.workflow_state, cv.current_owner,
-        cv.handoff_reason, cv.coordinator_notification_status,
+        cv.handoff_reason, cv.coordinator_notification_status, cv.ownership_version, cv.automation_resumed_at,
         coalesce(array_agg(t.name) FILTER (WHERE t.name IS NOT NULL), '{}') AS tags
        FROM contacts c JOIN leads l ON l.contact_id = c.id AND l.id = $3 JOIN pipeline_stages ps ON ps.id = l.pipeline_stage_id
        JOIN conversations cv ON cv.contact_id = c.id AND cv.id = $2 LEFT JOIN contact_tags ct ON ct.contact_id = c.id
@@ -900,6 +955,7 @@ export class PostgresRepository implements BioecosRepository {
       interest: this.pii.decryptNullable(row.interest), service: this.pii.decryptNullable(row.service),
       course: this.pii.decryptNullable(row.course), objective: this.pii.decryptNullable(row.objective),
       pipelineStage: row.pipeline_stage, tags: row.tags, automationPaused: row.automation_paused,
+      ownershipVersion: row.ownership_version, automationResumedAt: row.automation_resumed_at,
       qualificationStep: row.qualification_step, temperature: row.temperature,
       followupEnabled: row.followup_enabled, followupOptOut: row.followup_opt_out,
       workflowState: row.workflow_state, currentOwner: row.current_owner, handoffReason: this.pii.decryptNullable(row.handoff_reason),
@@ -1047,6 +1103,8 @@ export class PostgresRepository implements BioecosRepository {
 
   private mapCoordinatorNotification(row: Record<string, unknown>): CoordinatorNotificationRecord {
     return {
+      customerAckAt: row.customer_ack_at ? new Date(String(row.customer_ack_at)) : null,
+      customerAckError: row.customer_ack_error ? String(row.customer_ack_error) : null,
       id: String(row.id), contactId: String(row.contact_id), conversationId: String(row.conversation_id),
       message: this.pii.decrypt(String(row.message)), sourceMessageId: row.source_message_id ? String(row.source_message_id) : null,
       status: row.status as CoordinatorNotificationRecord["status"], attempts: Number(row.attempts),

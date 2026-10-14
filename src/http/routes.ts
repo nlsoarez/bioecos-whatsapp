@@ -466,13 +466,13 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
   });
 
   app.patch<{ Params: { conversationId: string } }>("/dashboard/conversations/:conversationId/workflow", async (request) => {
-    await requireSession(request);
+    const session = await requireSession(request);
     const values = z.object({
       state: z.enum(["ai_attending", "awaiting_coordinator", "coordinator_attending", "conversation_finished", "enrollment_completed", "not_interested"]),
       reason: z.string().min(2).max(500),
     }).parse(request.body);
     const owner = values.state === "ai_attending" ? "ai" : "coordinator";
-    await repository.setConversationWorkflow(request.params.conversationId, values.state as ConversationWorkflowState, owner, values.reason);
+    await repository.setConversationWorkflow(request.params.conversationId, values.state as ConversationWorkflowState, owner, values.reason, `dashboard:${session.sub}`);
     return { ok: true, state: values.state, owner };
   });
 

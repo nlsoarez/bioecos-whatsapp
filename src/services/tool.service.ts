@@ -13,8 +13,14 @@ export class ToolService implements AgentToolExecutor {
 
   async execute(call: AgentToolCall): Promise<unknown> {
     try {
+      const current = await this.repository.getContext(this.context.conversationId);
+      if (current.automationPaused || current.currentOwner !== 'ai' || current.workflowState !== 'ai_attending'
+        || (current.ownershipVersion ?? 0) !== (this.context.ownershipVersion ?? 0)) {
+        throw new Error('Atendimento automático não autorizado');
+      }
       const result = await this.executeValidated(call);
-      this.context = await this.repository.getContext(this.context.conversationId);
+      const refreshed = await this.repository.getContext(this.context.conversationId);
+      this.context = { ...refreshed, ownershipVersion: this.context.ownershipVersion ?? 0 };
       return { ok: true, result };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };

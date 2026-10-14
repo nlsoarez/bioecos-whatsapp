@@ -30,6 +30,19 @@ export class InMemoryRepository implements BioecosRepository {
   monthlyFailures: Array<{ candidate: MonthlyFollowupCandidate; error: string }> = [];
   assessments: LeadAssessment[] = [];
   notifications: CoordinatorNotificationRecord[] = [];
+  acknowledgements = new Set<string>();
+  async sendAuthorized(context: ContactContext, content: string, send: () => Promise<import('../../src/services/evolution.service.js').SendResult>, notificationId?: string) {
+    if (await this.isPhoneIgnored(context.phone)) return false;
+    if (notificationId) {
+      if (this.acknowledgements.has(notificationId) || this.context.currentOwner !== 'coordinator'
+        || (this.context.ownershipVersion ?? 0) !== (context.ownershipVersion ?? 0) + 1) return false;
+    } else if (this.context.automationPaused || this.context.currentOwner !== 'ai' || this.context.workflowState !== 'ai_attending'
+      || (this.context.ownershipVersion ?? 0) !== (context.ownershipVersion ?? 0)) return false;
+    const sent = await send();
+    await this.saveOutbound(context.conversationId, sent.externalMessageId, content);
+    if (notificationId) this.acknowledgements.add(notificationId);
+    return true;
+  }
   ignoredNumbers: IgnoredPhoneNumber[] = [];
 
   async health() { return true; }
@@ -123,6 +136,9 @@ export class InMemoryRepository implements BioecosRepository {
   async addNote(_context: ContactContext, note: string) { this.notes.push(note); }
   async handoffWithCoordinatorNotification(context: ContactContext, reason: string, summary: string,
     notification: import("../../src/domain/types.js").CoordinatorNotificationDraft) {
+    const previous = this.notifications.find((item) => item.conversationId === context.conversationId && item.sourceMessageId === notification.sourceMessageId);
+    if (previous) return previous.id;
+    this.context.ownershipVersion = (this.context.ownershipVersion ?? 0) + 1;
     this.handoffs.push({ reason, summary });
     this.context.automationPaused = true;
     this.context.pipelineStage = "Aguardando coordenador";
@@ -183,6 +199,8 @@ export class InMemoryRepository implements BioecosRepository {
     return this.notifications.filter((item) => !status || item.status === status).slice(0, limit);
   }
   async setConversationWorkflow(_conversationId: string, state: ConversationWorkflowState, owner: string, reason: string) {
+    this.context.ownershipVersion = (this.context.ownershipVersion ?? 0) + 1;
+    if (state === 'ai_attending') this.context.automationResumedAt = new Date();
     this.context.workflowState = state;
     this.context.currentOwner = owner;
     this.context.automationPaused = state !== "ai_attending";

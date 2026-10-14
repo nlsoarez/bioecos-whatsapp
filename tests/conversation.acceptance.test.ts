@@ -60,6 +60,32 @@ function setup(knowledge = true, knowledgeManagement?: KnowledgeManagement) {
 }
 
 describe("homologação Bioecos", () => {
+  it('suprime IA em processamento quando transferida e mesmo após devolução', async () => {
+    const s = setup();
+    s.agent.respond = async () => {
+      await s.repository.setConversationWorkflow('conversation-1', 'coordinator_attending', 'coordinator', 'Assumido');
+      await s.repository.setConversationWorkflow('conversation-1', 'ai_attending', 'ai', 'Devolvido');
+      return 'Resposta obsoleta';
+    };
+    expect((await s.service.handle(inbound('oi'))).status).toBe('paused');
+    expect(s.sender.sent).toHaveLength(0);
+  });
+
+  it('preserva novas mensagens após handoff sem responder e permite próximas após devolução', async () => {
+    const s = setup();
+    await s.service.handle(inbound('quero atendimento humano'));
+    const sent = s.sender.sent.length;
+    for (const message of ['oi', 'quero imagem', 'SAIR']) expect((await s.service.handle(inbound(message))).status).toBe('paused');
+    expect(s.sender.sent).toHaveLength(sent);
+    const recreated = new ConversationService(s.repository, s.agent, s.sender, s.notifier);
+    expect((await recreated.handle(inbound('oi'))).status).toBe('paused');
+    await s.repository.setConversationWorkflow('conversation-1', 'ai_attending', 'ai', 'Devolvido');
+    const message = inbound('oi');
+    message.timestamp = new Date(Date.now() + 1000);
+    expect((await recreated.handle(message)).status).toBe('responded');
+    message.externalMessageId = 'queued-old'; message.timestamp = new Date(0);
+    expect((await recreated.handle(message)).status).toBe('paused');
+  });
   it("envia uma imagem cadastrada quando o contato pede material visual", async () => {
     const manager = {
       findRelevantMedia: async () => ({ id: "media-1", filename: "fitoterapia.png", mimeType: "image/png", data: Buffer.from("imagem"), description: "Programa visual do curso de Fitoterapia", courseName: "Fitoterapia" }),
@@ -232,9 +258,9 @@ describe("homologação Bioecos", () => {
     s.repository.context.automationPaused = true;
     s.repository.context.followupEnabled = true;
     const result = await s.service.handle(inbound("SAIR"));
-    expect(result.response).toContain("cancelado");
+    expect(result.status).toBe('paused');
     expect(s.repository.context.followupOptOut).toBe(true);
-    expect(s.sender.sent).toHaveLength(1);
+    expect(s.sender.sent).toHaveLength(0);
   });
 
   it("19. SIM após acompanhamento retoma a conversa com a IA", async () => {

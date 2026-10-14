@@ -17,6 +17,8 @@ export interface ContactContext {
   pipelineStage: PipelineStage;
   tags: AllowedTag[];
   automationPaused: boolean;
+  ownershipVersion?: number;
+  automationResumedAt?: Date | null;
   qualificationStep: QualificationStep | null;
   temperature: LeadTemperature;
   followupEnabled: boolean;
@@ -51,6 +53,7 @@ export interface LeadAssessment {
 }
 
 export interface MonthlyFollowupCandidate {
+  ownershipVersion?: number;
   leadId: string;
   contactId: string;
   conversationId: string;
@@ -88,6 +91,8 @@ export interface IgnoredPhoneNumberInput {
 }
 
 export interface CoordinatorNotificationRecord {
+  customerAckAt?: Date | null;
+  customerAckError?: string | null;
   id: string;
   contactId: string;
   conversationId: string;
