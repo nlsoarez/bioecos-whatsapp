@@ -146,6 +146,7 @@ function showDashboard() {
 }
 
 function logout() {
+  closeHumanConversation();
   stopQrSession();
   sessionStorage.removeItem(SESSION_KEY);
   clearInterval(refreshTimer);
@@ -394,6 +395,7 @@ async function loadLeadDetail(contactId) {
 }
 
 function renderLeadDetail(lead) {
+  closeHumanConversation();
   const detail = byId("lead-detail");
   detail.replaceChildren();
   const heading = document.createElement("div");
@@ -422,6 +424,7 @@ function renderLeadDetail(lead) {
   });
   if (!history.children.length) history.append(emptyState("Sem mensagens registradas."));
   detail.append(heading, meta, summary, actions, history);
+  if(lead.conversation_id) mountHumanConversation(lead,detail,history);
 }
 
 async function openConversationFromHash() {
@@ -449,6 +452,7 @@ async function exportLead(contactId) {
 }
 
 async function deleteLead(contactId) {
+  closeHumanConversation();
   if (!window.confirm("Esta ação exclui definitivamente o contato, conversas, mensagens e histórico associado. Deseja continuar?")) return;
   const confirmation = window.prompt("Digite EXCLUIR para confirmar:");
   if (confirmation !== "EXCLUIR") return;
@@ -463,7 +467,8 @@ async function changeWorkflow(conversationId, state, label) {
   try {
     await api(`/dashboard/conversations/${encodeURIComponent(conversationId)}/workflow`, { method: "PATCH", body: { state, reason: `Ação manual no portal: ${label}` } });
     await loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");
-    byId("lead-detail").hidden = true;
+    const {lead}=await api(`/dashboard/conversations/${encodeURIComponent(conversationId)}`);
+    renderLeadDetail(lead);
   } catch (error) {
     window.alert(error.message);
   }
@@ -705,6 +710,7 @@ function renderConversations(container, conversations) {
 }
 
 function showSection(section) {
+  if(section!=='leads') closeHumanConversation();
   document.querySelectorAll(".dashboard-section").forEach((element) => { element.hidden = element.id !== `section-${section}`; });
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.section === section));
   if (section === "leads") loadLeads(document.querySelector("#lead-filters button.active")?.dataset.filter || "all");

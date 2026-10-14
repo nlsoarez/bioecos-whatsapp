@@ -22,6 +22,7 @@ import {
 } from "../services/knowledge-management.service.js";
 
 interface Dependencies {
+  humanMessages?: import('../services/human-messages.service.js').HumanMessagesService;
   env: Env;
   repository: BioecosRepository;
   evolution: EvolutionService;
@@ -37,6 +38,7 @@ interface Dependencies {
 
 const PORTAL_ROOT = resolve(process.cwd(), "docs");
 const PORTAL_ASSETS = new Map([
+  ['human-messages.js','application/javascript; charset=utf-8'],
   ["app.js", "application/javascript; charset=utf-8"],
   ["bioecos-favicon.ico", "image/x-icon"],
   ["bioecos-share.jpg", "image/jpeg"],
@@ -446,7 +448,24 @@ export async function registerRoutes(app: FastifyInstance, dependencies: Depende
     await requireSession(request);
     const contactId = await repository.getConversationContactId(request.params.conversationId);
     if (!contactId) return reply.code(404).send({ error: "Conversa não encontrada" });
-    return { lead: await repository.getContactView(contactId) };
+    return { lead: await repository.getContactView(contactId, request.params.conversationId) };
+  });
+
+  app.get<{ Params: { conversationId: string } }>('/dashboard/conversations/:conversationId/messages', async (request) => {
+    await requireSession(request);
+    const id = z.uuid().parse(request.params.conversationId);
+    const {cursor} = z.object({cursor:z.uuid().optional()}).parse(request.query);
+    if (!await repository.getConversationContactId(id)) throw httpError(404,'Conversa não encontrada');
+    if (!dependencies.humanMessages) throw httpError(503,'Mensagens humanas indisponíveis');
+    return dependencies.humanMessages.page(id,cursor);
+  });
+  app.post<{ Params: { conversationId: string } }>('/dashboard/conversations/:conversationId/messages', async (request,reply) => {
+    const session = await requireSession(request);
+    const id = z.uuid().parse(request.params.conversationId);
+    const values = z.object({text:z.string().trim().min(1).max(4096),requestKey:z.uuid(),version:z.number().int().nonnegative()}).strict().parse(request.body);
+    if (!dependencies.humanMessages) throw httpError(503,'Mensagens humanas indisponíveis');
+    const message = await dependencies.humanMessages.enqueue(id,values.text,values.requestKey,values.version,`dashboard:${session.sub}`);
+    return reply.code(202).send({message});
   });
 
   app.get<{ Params: { contactId: string } }>("/dashboard/leads/:contactId/export", async (request, reply) => {

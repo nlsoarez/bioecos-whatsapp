@@ -1,4 +1,5 @@
 import { buildApp } from "./app.js";
+import { HumanMessagesService } from './services/human-messages.service.js';
 import { loadEnv } from "./config/env.js";
 import { createPool } from "./db/client.js";
 import { PostgresRepository } from "./repositories/postgres.repository.js";
@@ -17,9 +18,10 @@ import { PostgresKnowledgeManagementService } from "./services/knowledge-managem
 
 const env = loadEnv();
 const pool = createPool(env);
-const repository = new PostgresRepository(pool, env.PII_ENCRYPTION_KEY);
 const evolution = new EvolutionService(env);
 const secrets = new RuntimeSecretStore(env.RUNTIME_SECRETS_PATH, env.PII_ENCRYPTION_KEY);
+const repository = new PostgresRepository(pool, env.PII_ENCRYPTION_KEY, () => secrets.get('COORDINATOR_WHATSAPP'));
+const humanMessages = new HumanMessagesService(pool,repository,evolution,env.PII_ENCRYPTION_KEY);
 const agent = new OpenAIResponsesClient(env, fetch, async () => (
   (await secrets.get("OPENAI_API_KEY")) ?? (env.OPENAI_API_KEY || null)
 ));
@@ -41,6 +43,7 @@ const app = await buildApp({
   env, repository, evolution, conversations, openai: agent, secrets, coordinatorNotifier, embeddings, webhookJobs,
   dashboardSessions,
   knowledgeManagement,
+  humanMessages,
 });
 
 const runMonthlyFollowup = async () => {
@@ -55,6 +58,8 @@ const followupTimer = setInterval(() => void runMonthlyFollowup(), env.FOLLOWUP_
 followupTimer.unref();
 const webhookTimer = setInterval(() => void webhookJobs.runOnce().catch((error) => app.log.error(error, "Falha no worker de webhooks")), env.WEBHOOK_WORKER_INTERVAL_MS);
 webhookTimer.unref();
+const humanTimer = setInterval(() => void humanMessages.runOnce().catch(error=>app.log.error(error,'Falha na fila de mensagens humanas')),env.WEBHOOK_WORKER_INTERVAL_MS);
+humanTimer.unref();
 const coordinatorNotificationTimer = setInterval(() => void coordinatorNotifier.runDue().then((result) => {
   if (result.inspected) app.log.info(result, "Ciclo de notificações ao coordenador concluído");
 }).catch((error) => app.log.error(error, "Falha no worker de notificações ao coordenador")), env.COORDINATOR_NOTIFICATION_WORKER_INTERVAL_MS);
@@ -71,6 +76,7 @@ const close = async (signal: string) => {
   app.log.info({ signal }, "Encerrando aplicação");
   clearInterval(followupTimer);
   clearInterval(webhookTimer);
+  clearInterval(humanTimer);
   clearInterval(coordinatorNotificationTimer);
   clearInterval(aiHealthTimer);
   clearInterval(retentionTimer);

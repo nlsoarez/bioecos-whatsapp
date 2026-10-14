@@ -16,7 +16,7 @@ type Queryable = Pick<pg.Pool | pg.PoolClient, "query">;
 export class PostgresRepository implements BioecosRepository {
   private readonly pii: PiiCipher;
 
-  constructor(private readonly pool: pg.Pool, piiEncryptionKey: string) {
+  constructor(private readonly pool: pg.Pool, piiEncryptionKey: string, private readonly coordinatorPhone?: () => Promise<string | null>) {
     this.pii = new PiiCipher(piiEncryptionKey);
   }
 
@@ -788,7 +788,7 @@ export class PostgresRepository implements BioecosRepository {
       failedCoordinatorNotifications: failedNotifications.rows[0]?.total ?? 0 };
   }
 
-  async getContactView(contactId: string): Promise<unknown | null> {
+  async getContactView(contactId: string, conversationId?: string): Promise<unknown | null> {
     const contact = await this.pool.query(
       `SELECT c.id, c.project_id, c.phone, c.name, c.email, c.city, c.state, c.company_name, c.profession,
         c.source, c.created_at, c.updated_at, (c.cpf IS NOT NULL) AS has_cpf,
@@ -797,20 +797,20 @@ export class PostgresRepository implements BioecosRepository {
         l.followup_next_at, l.followup_last_at, l.followup_attempts, l.followup_last_error,
         l.main_questions, l.objections, l.enrollment_status, l.outcome,
         ps.name AS pipeline_stage, cv.id AS conversation_id, cv.workflow_state, cv.current_owner,
-        cv.handoff_reason, cv.coordinator_notification_status, cv.summary,
+        cv.handoff_reason, cv.coordinator_notification_status, cv.summary, cv.ownership_version,
         (SELECT coalesce(array_agg(t.name), '{}') FROM contact_tags ct
           JOIN tags t ON t.id = ct.tag_id WHERE ct.contact_id = c.id) AS tags
        FROM contacts c JOIN leads l ON l.contact_id = c.id
        JOIN pipeline_stages ps ON ps.id = l.pipeline_stage_id
-       LEFT JOIN LATERAL (SELECT * FROM conversations x WHERE x.contact_id = c.id ORDER BY x.started_at DESC LIMIT 1) cv ON true
+       LEFT JOIN LATERAL (SELECT * FROM conversations x WHERE x.contact_id = c.id AND ($2::uuid IS NULL OR x.id = $2) ORDER BY x.started_at DESC LIMIT 1) cv ON true
        WHERE c.id = $1`,
-      [contactId],
+      [contactId, conversationId ?? null],
     );
     if (!contact.rows[0]) return null;
     const history = await this.pool.query(
       `SELECT m.direction, m.type, m.content, m.timestamp FROM messages m
-       JOIN conversations cv ON cv.id = m.conversation_id WHERE cv.contact_id = $1 ORDER BY m.timestamp DESC LIMIT 100`,
-      [contactId],
+       JOIN conversations cv ON cv.id = m.conversation_id WHERE cv.contact_id = $1 AND m.conversation_id = $2 ORDER BY m.timestamp DESC LIMIT 50`,
+      [contactId, contact.rows[0].conversation_id],
     );
     const temperatures = await this.pool.query(
       "SELECT from_temperature, to_temperature, reason, created_at FROM lead_temperature_history WHERE lead_id = (SELECT id FROM leads WHERE contact_id = $1) ORDER BY created_at DESC",
@@ -984,6 +984,8 @@ export class PostgresRepository implements BioecosRepository {
   }
 
   async isPhoneIgnored(phone: string): Promise<boolean> {
+    const coordinator = await this.coordinatorPhone?.();
+    if (coordinator && normalizePhone(coordinator) === normalizePhone(phone)) return true;
     const phoneHash = this.pii.phoneHash(normalizePhone(phone));
     const result = await this.pool.query<{ ignored: boolean }>(
       `SELECT EXISTS(

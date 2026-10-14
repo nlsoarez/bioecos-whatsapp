@@ -65,7 +65,7 @@ export interface BioecosRepository {
   saveOutbound(conversationId: string, externalMessageId: string, content: string, metadata: unknown): Promise<void>;
   setAutomationPaused(conversationId: string, paused: boolean, actor: string): Promise<void>;
   getDashboard(): Promise<unknown>;
-  getContactView(contactId: string): Promise<unknown | null>;
+  getContactView(contactId: string, conversationId?: string): Promise<unknown | null>;
   getConversationContactId(conversationId: string): Promise<string | null>;
   recordHumanOutbound(message: import("../domain/types.js").OutboundWebhookMessage): Promise<boolean>;
   exportContactData(contactId: string): Promise<unknown | null>;

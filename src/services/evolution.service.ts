@@ -38,8 +38,8 @@ export interface EvolutionWebhookState {
   message: string;
 }
 
-class EvolutionHttpError extends Error {
-  constructor(status: number, readonly retryable: boolean) {
+export class EvolutionHttpError extends Error {
+  constructor(readonly status: number, readonly retryable: boolean) {
     super(`Evolution API respondeu com status ${status}`);
   }
 }
@@ -59,7 +59,7 @@ export class EvolutionService implements MessageSender {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async sendText(phone: string, text: string): Promise<SendResult> {
+  async sendText(phone: string, text: string, maxRetries = this.env.EVOLUTION_MAX_RETRIES): Promise<SendResult> {
     if (!this.env.EVOLUTION_API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
     const url = `${this.env.EVOLUTION_API_URL.replace(/\/$/, "")}/message/sendText/${encodeURIComponent(this.env.EVOLUTION_INSTANCE_NAME)}`;
     let lastError: unknown;
@@ -67,7 +67,7 @@ export class EvolutionService implements MessageSender {
     const normalizedPhone = normalizePhone(phone);
     const fingerprint = outboundFingerprint(normalizedPhone, text);
     this.rememberAutomatedOutbound(fingerprint);
-    for (let attempt = 0; attempt <= this.env.EVOLUTION_MAX_RETRIES; attempt += 1) {
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.env.EVOLUTION_REQUEST_TIMEOUT_MS);
       try {
@@ -83,14 +83,14 @@ export class EvolutionService implements MessageSender {
           if (typeof key?.id !== 'string' || !key.id) throw new EvolutionHttpError(502, false);
           return { externalMessageId: key.id, raw };
         }
-        if (response.status < 500 || attempt === this.env.EVOLUTION_MAX_RETRIES) {
+        if (response.status < 500 || attempt === maxRetries) {
           this.automatedOutbounds.delete(fingerprint);
           throw new EvolutionHttpError(response.status, response.status >= 500);
         }
         lastError = new Error(`Evolution API respondeu ${response.status}`);
       } catch (error) {
         lastError = error;
-        if ((error instanceof EvolutionHttpError && !error.retryable) || attempt === this.env.EVOLUTION_MAX_RETRIES) {
+        if ((error instanceof EvolutionHttpError && !error.retryable) || attempt === maxRetries) {
           this.automatedOutbounds.delete(fingerprint);
           throw error;
         }

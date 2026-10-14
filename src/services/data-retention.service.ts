@@ -10,6 +10,7 @@ export class DataRetentionService {
       await client.query("BEGIN");
       const messages = await client.query("DELETE FROM messages WHERE created_at < now() - $1::interval", [interval]);
       const jobs = await client.query("DELETE FROM webhook_jobs WHERE created_at < now() - $1::interval", [interval]);
+      await client.query("DELETE FROM human_outbound_jobs WHERE created_at < now() - $1::interval AND status IN ('accepted','failed','unknown','cancelled')",[interval]);
       const audits = await client.query("DELETE FROM audit_logs WHERE created_at < now() - $1::interval", [interval]);
       await client.query(
         `DELETE FROM coordinator_notifications

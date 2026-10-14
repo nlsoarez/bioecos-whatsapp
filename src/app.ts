@@ -17,6 +17,7 @@ import type { KnowledgeManagement } from "./services/knowledge-management.servic
 import { ZodError } from "zod";
 
 export interface AppDependencies {
+  humanMessages?: import('./services/human-messages.service.js').HumanMessagesService;
   env: Env;
   repository: BioecosRepository;
   evolution: EvolutionService;
